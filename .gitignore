@@ -1,0 +1,57 @@
+# ---------- Secretos (NUNCA subir) ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+google-services.json
+service-account*.json
+
+# ---------- Bot de WhatsApp ----------
+# La sesión de WhatsApp contiene credenciales del número
+bot/auth/
+bot/auth_info*/
+bot/logs/
+*.log
+
+# ---------- Node ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- Expo / React Native (mobile) ----------
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/android/
+mobile/ios/
+*.apk
+*.aab
+*.ipa
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+
+# ---------- Panel admin (Vite) ----------
+admin/dist/
+.vercel/
+
+# ---------- Supabase local ----------
+supabase/.branches/
+supabase/.temp/
+
+# ---------- Sistema operativo y editores ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# ---------- Varios ----------
+coverage/
+*.tsbuildinfo
