@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "DespachGo",
+    "slug": "despachgo-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "despachgo",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "android": {
+      "package": "cl.despachgo.mobile"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b4570386-c76c-4b0b-b889-27c2bdf77ad3"
+      }
+    },
+    "owner": "despachgo-team"
+  }
+}
