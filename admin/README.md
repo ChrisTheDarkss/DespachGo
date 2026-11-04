@@ -32,12 +32,16 @@ En Vercel: Framework = Vite, y define las mismas dos variables de entorno. `verc
 
 Faltan: 4-15 (agrupar órdenes del mismo cliente), 4-17 (fotos de guías), 4-19 (orden con saldo), 4-20 (mapa en vivo).
 
-## Supuestos que hay que confirmar con la Persona 1 (documento de acuerdos 1-02)
+## Esquema de Supabase que usa el panel
 
-- **Tablas y columnas**: `ordenes(id, numero_guia [único], cliente_nombre, telefono, direccion, notas, lat, lng, estado, motivo_cancelacion, created_at)`, `orden_items(orden_id, producto_id, cantidad)`, `productos(id, nombre, activo)`, `perfiles(id, nombre, rol)`, `rutas(id, fecha, estado, conductor_id, created_at)`, `paradas(id, ruta_id, posicion, estado)`, `parada_ordenes(parada_id, orden_id)`. Si algún nombre cambia, ajustar `src/types/index.ts` y `src/services/`.
-- **Estados de orden**: `pendiente, asignada, entregada, parcial, fallida, cancelada` (constante `ESTADOS_ORDEN`).
-- **Teléfono** guardado como `+569XXXXXXXX` (sin espacios).
-- **`asignar_ruta`** (1-10) se llama con `p_fecha`, `p_conductor_id`, `p_orden_ids` (ids en orden de visita).
-- **Edge Functions**: `geocodificar` recibe `{direccion}` y responde `{lat, lng}`; `optimizar_ruta` recibe `{puntos:[{id,lat,lng}]}` y responde `{orden:[id,...]}`. Mientras `geocodificar` no exista, el panel usa Nominatim directo como respaldo.
-- **RLS**: el admin debe poder leer/escribir `ordenes`, `orden_items` y leer `perfiles`, `rutas`, `paradas`.
-- Guardar una orden hace varias llamadas (orden + items). Si se necesita atomicidad, moverlo a una función SQL.
+Alineado con las migraciones 001, 002 y 005 (revisión «Problemas_Admin»):
+
+- `ordenes`: `numero_guia`, `cliente_nombre`, `cliente_telefono`, `direccion`, `notas`, `latitud`, `longitud`, `estado`, `motivo_cancelacion`, `creado_en`.
+- `orden_items`: `orden_id`, `producto_id`, `cantidad_pedida`.
+- Estados de orden: `pendiente`, `asignada`, `en_ruta`, `entregada`, `entregada_parcial`, `fallida`, `cancelada` (`parcial` solo existe en paradas y entregas).
+- `rutas`: `creado_en`. `paradas`: `posicion_sugerida` y `posicion_final` (el panel muestra y ordena por `posicion_final`, y usa la sugerida si falta).
+- `asignar_ruta(p_fecha, p_conductor, p_ordenes)`; `p_ordenes` va en el orden de visita.
+- Conductores: solo `rol = 'conductor'` y `activo = true`.
+- Las Edge Functions `geocodificar` y `optimizar_ruta` siguen usando `lat`/`lng` (no son columnas de la base).
+
+Teléfono guardado como `+569XXXXXXXX`. Guardar una orden hace varias llamadas (orden + items); si se necesita atomicidad, moverlo a una función SQL.

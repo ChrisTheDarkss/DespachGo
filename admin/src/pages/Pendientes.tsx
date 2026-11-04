@@ -15,7 +15,7 @@ export default function Pendientes() {
   async function cargar() {
     setCargando(true)
     try {
-      setOrdenes(await listarOrdenes({ estados: ['fallida', 'parcial'] }))
+      setOrdenes(await listarOrdenes({ estados: ['fallida', 'entregada_parcial'] }))
       setError(null)
     } catch (e) {
       setError((e as Error).message)

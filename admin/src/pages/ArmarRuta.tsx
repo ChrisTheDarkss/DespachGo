@@ -50,8 +50,13 @@ export default function ArmarRuta() {
     .filter((o): o is Orden => !!o)
 
   const puntos: PuntoMapa[] = ordenesSeleccionadas
-    .filter((o) => o.lat != null && o.lng != null)
-    .map((o, i) => ({ id: o.id, lat: o.lat as number, lng: o.lng as number, etiqueta: i + 1 }))
+    .filter((o) => o.latitud != null && o.longitud != null)
+    .map((o, i) => ({
+      id: o.id,
+      lat: o.latitud as number,
+      lng: o.longitud as number,
+      etiqueta: i + 1,
+    }))
 
   const filtradas = pendientes.filter((o) => {
     const q = busqueda.trim().toLowerCase()
@@ -167,7 +172,7 @@ export default function ArmarRuta() {
               <p className="texto-suave">No hay órdenes pendientes.</p>
             )}
             {filtradas.map((o) => {
-              const sinPin = o.lat == null || o.lng == null
+              const sinPin = o.latitud == null || o.longitud == null
               const marcada = seleccion.includes(o.id)
               return (
                 <label key={o.id} className={`item-orden ${marcada ? 'marcada' : ''}`}>
@@ -181,7 +186,7 @@ export default function ArmarRuta() {
                     <strong>{o.numero_guia}</strong> · {o.cliente_nombre}
                     <br />
                     <small>
-                      {o.direccion} · {formatearTelefono(o.telefono)}
+                      {o.direccion} · {formatearTelefono(o.cliente_telefono)}
                     </small>
                     {sinPin && <small className="error"> Sin ubicación: edita la orden.</small>}
                   </div>

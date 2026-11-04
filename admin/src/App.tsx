@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import Fondo from './components/Fondo'
 import Layout from './components/Layout'
 import { AuthProvider } from './hooks/useAuth'
 import ArmarRuta from './pages/ArmarRuta'
@@ -11,6 +12,7 @@ import ResumenDia from './pages/ResumenDia'
 export default function App() {
   return (
     <BrowserRouter>
+      <Fondo />
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />

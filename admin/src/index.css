@@ -12,7 +12,7 @@
   --aviso-fondo: #fef3c7;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: var(--texto);
-  background: var(--fondo);
+  background: #0f172a;
 }
 
 * {
@@ -22,6 +22,95 @@
 body {
   margin: 0;
   font-size: 16px;
+  background: transparent;
+}
+
+/* ---------- Fondo animado (estilo pantalla de inicio PS2) ---------- */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  background:
+    radial-gradient(ellipse at 50% 110%, rgba(37, 99, 235, 0.55), transparent 55%),
+    radial-gradient(ellipse at 50% -10%, rgba(30, 64, 175, 0.35), transparent 50%),
+    linear-gradient(180deg, #020617 0%, #06122e 55%, #0a1f4d 100%);
+  animation: fondo-respirar 14s ease-in-out infinite alternate;
+}
+
+@keyframes fondo-respirar {
+  0% {
+    filter: brightness(0.85);
+  }
+  100% {
+    filter: brightness(1.2);
+  }
+}
+
+.fondo-torres {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.torre {
+  position: absolute;
+  bottom: -10%;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(
+    to top,
+    rgba(96, 165, 250, 0) 0%,
+    rgba(96, 165, 250, 0.38) 45%,
+    rgba(191, 219, 254, 0.7) 100%
+  );
+  box-shadow: 0 0 18px rgba(96, 165, 250, 0.35);
+  opacity: 0.5;
+  animation: torre-flotar var(--dur) ease-in-out var(--delay) infinite alternate;
+}
+
+@keyframes torre-flotar {
+  0% {
+    transform: translateY(8%) scaleY(0.85);
+    opacity: 0.25;
+  }
+  100% {
+    transform: translateY(-14%) scaleY(1.1);
+    opacity: 0.65;
+  }
+}
+
+.fondo-neblina {
+  position: fixed;
+  left: -10%;
+  right: -10%;
+  bottom: -10%;
+  height: 45%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 100%, rgba(147, 197, 253, 0.35), transparent 65%);
+  animation: neblina 18s ease-in-out infinite alternate;
+}
+
+@keyframes neblina {
+  0% {
+    transform: translateX(-3%);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translateX(3%);
+    opacity: 1;
+  }
+}
+
+/* Con «reducir movimiento» activado en el sistema, el fondo queda quieto */
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  .torre,
+  .fondo-neblina {
+    animation: none;
+  }
 }
 
 h1,
@@ -42,7 +131,8 @@ a {
 }
 
 .lateral {
-  background: #111827;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(10px);
   color: #fff;
   padding: 1.25rem 1rem;
   display: flex;
@@ -106,6 +196,17 @@ a {
   margin: 0;
 }
 
+/* Textos que quedan directamente sobre el fondo animado */
+.contenido > div > .encabezado > h2,
+.contenido > div > .texto-suave,
+.contenido > div > .cargando {
+  color: #f8fafc;
+}
+
+.contenido > div > .encabezado .campo-fila > span {
+  color: #f8fafc;
+}
+
 .cargando {
   padding: 2rem;
   color: var(--suave);
@@ -113,11 +214,13 @@ a {
 
 /* ---------- Tarjetas y formularios ---------- */
 .tarjeta {
-  background: var(--tarjeta);
-  border: 1px solid var(--borde);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 12px;
   padding: 1rem;
   margin-bottom: 1rem;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.18);
 }
 
 .campo {
@@ -330,6 +433,7 @@ fieldset:disabled {
   color: #92400e;
 }
 .badge-asignada,
+.badge-en_ruta,
 .badge-en_curso {
   background: #dbeafe;
   color: #1e40af;
@@ -339,7 +443,8 @@ fieldset:disabled {
   background: #d1fae5;
   color: #065f46;
 }
-.badge-parcial {
+.badge-parcial,
+.badge-entregada_parcial {
   background: #ede9fe;
   color: #5b21b6;
 }

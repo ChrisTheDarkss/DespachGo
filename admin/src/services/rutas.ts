@@ -4,17 +4,18 @@ import type { Perfil, Ruta } from '../types'
 export async function listarConductores(): Promise<Perfil[]> {
   const { data, error } = await supabase
     .from('perfiles')
-    .select('id, nombre, rol')
+    .select('id, nombre, rol, activo')
     .eq('rol', 'conductor')
+    .eq('activo', true)
     .order('nombre', { ascending: true })
   if (error) throw new Error(error.message)
   return (data ?? []) as Perfil[]
 }
 
 /**
- * Llama a la función SQL asignar_ruta (tarea 1-10): crea la ruta y las paradas
+ * Llama a la función SQL asignar_ruta (migración 005): crea la ruta y las paradas
  * en el orden recibido y pasa las órdenes a «asignada».
- * Parámetros esperados: p_fecha, p_conductor_id, p_orden_ids (uuid[] en orden de visita).
+ * Parámetros: p_fecha, p_conductor, p_ordenes (uuid[] en orden de visita).
  */
 export async function asignarRuta(
   fecha: string,
@@ -23,8 +24,8 @@ export async function asignarRuta(
 ): Promise<void> {
   const { error } = await supabase.rpc('asignar_ruta', {
     p_fecha: fecha,
-    p_conductor_id: conductorId,
-    p_orden_ids: ordenIds,
+    p_conductor: conductorId,
+    p_ordenes: ordenIds,
   })
   if (error) throw new Error(error.message)
 }
@@ -33,12 +34,15 @@ export async function listarRutasDelDia(fecha: string): Promise<Ruta[]> {
   const { data, error } = await supabase
     .from('rutas')
     .select(
-      '*, perfiles(nombre), paradas(id, posicion, estado, parada_ordenes(ordenes(numero_guia, cliente_nombre, direccion)))',
+      '*, perfiles(nombre), paradas(id, posicion_sugerida, posicion_final, estado, parada_ordenes(ordenes(numero_guia, cliente_nombre, direccion)))',
     )
     .eq('fecha', fecha)
-    .order('created_at', { ascending: true })
+    .order('creado_en', { ascending: true })
   if (error) throw new Error(error.message)
   const rutas = (data ?? []) as unknown as Ruta[]
-  for (const r of rutas) r.paradas?.sort((a, b) => a.posicion - b.posicion)
+  // La posición efectiva es posicion_final; si aún no existe, se usa la sugerida.
+  const pos = (p: { posicion_final: number | null; posicion_sugerida: number | null }) =>
+    p.posicion_final ?? p.posicion_sugerida ?? 0
+  for (const r of rutas) r.paradas?.sort((a, b) => pos(a) - pos(b))
   return rutas
 }

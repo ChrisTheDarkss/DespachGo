@@ -1,18 +1,22 @@
 // Nombres de columnas y estados: alinear con el documento de acuerdos (tarea 1-02).
 
+// Estados de `ordenes` según el esquema de Supabase.
+// (`parcial` existe solo en paradas y entregas; en órdenes es `entregada_parcial`.)
 export type EstadoOrden =
   | 'pendiente'
   | 'asignada'
+  | 'en_ruta'
   | 'entregada'
-  | 'parcial'
+  | 'entregada_parcial'
   | 'fallida'
   | 'cancelada'
 
 export const ESTADOS_ORDEN: EstadoOrden[] = [
   'pendiente',
   'asignada',
+  'en_ruta',
   'entregada',
-  'parcial',
+  'entregada_parcial',
   'fallida',
   'cancelada',
 ]
@@ -23,6 +27,7 @@ export interface Producto {
   activo?: boolean | null
 }
 
+/** Producto de una orden tal como lo usa el formulario (cantidad que se pide). */
 export interface ItemOrden {
   producto_id: string
   cantidad: number
@@ -32,17 +37,17 @@ export interface Orden {
   id: string
   numero_guia: string
   cliente_nombre: string
-  telefono: string
+  cliente_telefono: string
   direccion: string
   notas: string | null
-  lat: number | null
-  lng: number | null
+  latitud: number | null
+  longitud: number | null
   estado: EstadoOrden
   motivo_cancelacion: string | null
-  created_at: string
+  creado_en: string
   orden_items?: {
     producto_id: string
-    cantidad: number
+    cantidad_pedida: number
     productos?: { nombre: string } | null
   }[]
 }
@@ -50,17 +55,18 @@ export interface Orden {
 export interface DatosOrden {
   numero_guia: string
   cliente_nombre: string
-  telefono: string
+  cliente_telefono: string
   direccion: string
   notas: string | null
-  lat: number
-  lng: number
+  latitud: number
+  longitud: number
 }
 
 export interface Perfil {
   id: string
   nombre: string
   rol: 'admin' | 'conductor'
+  activo?: boolean
 }
 
 export interface Coordenadas {
@@ -70,7 +76,8 @@ export interface Coordenadas {
 
 export interface Parada {
   id: string
-  posicion: number
+  posicion_sugerida: number | null
+  posicion_final: number | null
   estado: string
   parada_ordenes?: {
     ordenes?: {
