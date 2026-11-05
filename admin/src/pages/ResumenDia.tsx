@@ -74,7 +74,7 @@ export default function ResumenDia() {
                   const ords = (p.parada_ordenes ?? []).map((po) => po.ordenes).filter(Boolean)
                   return (
                     <tr key={p.id}>
-                      <td>{p.posicion}</td>
+                      <td>{p.posicion_final ?? p.posicion_sugerida}</td>
                       <td>{ords.map((o) => o?.numero_guia).join(', ')}</td>
                       <td>{ords[0]?.cliente_nombre}</td>
                       <td>{ords[0]?.direccion}</td>

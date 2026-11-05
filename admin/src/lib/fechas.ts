@@ -3,7 +3,7 @@ export function hoyLocal(): string {
   return new Date().toLocaleDateString('sv-SE')
 }
 
-/** Inicio del día local (ISO) y del día siguiente, para filtrar por created_at. */
+/** Inicio del día local (ISO) y del día siguiente, para filtrar por creado_en. */
 export function rangoDia(fecha: string): { desde: string; hasta: string } {
   const inicio = new Date(`${fecha}T00:00:00`)
   const fin = new Date(inicio)

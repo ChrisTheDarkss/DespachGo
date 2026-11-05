@@ -118,17 +118,17 @@ export default function Ordenes() {
                     <strong>{o.numero_guia}</strong>
                   </td>
                   <td>{o.cliente_nombre}</td>
-                  <td>{formatearTelefono(o.telefono)}</td>
+                  <td>{formatearTelefono(o.cliente_telefono)}</td>
                   <td>{o.direccion}</td>
                   <td>
                     {(o.orden_items ?? [])
-                      .map((i) => `${i.cantidad} × ${i.productos?.nombre ?? '?'}`)
+                      .map((i) => `${i.cantidad_pedida} × ${i.productos?.nombre ?? '?'}`)
                       .join(', ')}
                   </td>
                   <td>
                     <EstadoBadge estado={o.estado} />
                   </td>
-                  <td>{formatearFechaHora(o.created_at)}</td>
+                  <td>{formatearFechaHora(o.creado_en)}</td>
                   <td>
                     <Link to={`/ordenes/${o.id}`} className="btn">
                       Ver / editar

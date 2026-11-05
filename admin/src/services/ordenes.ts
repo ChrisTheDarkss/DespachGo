@@ -10,19 +10,19 @@ export interface FiltrosOrdenes {
 }
 
 const SELECT_ORDEN =
-  '*, orden_items(producto_id, cantidad, productos(nombre))'
+  '*, orden_items(producto_id, cantidad_pedida, productos(nombre))'
 
 export async function listarOrdenes(filtros: FiltrosOrdenes = {}): Promise<Orden[]> {
   let q = supabase
     .from('ordenes')
     .select(SELECT_ORDEN)
-    .order('created_at', { ascending: false })
+    .order('creado_en', { ascending: false })
 
   if (filtros.estado) q = q.eq('estado', filtros.estado)
   if (filtros.estados && filtros.estados.length > 0) q = q.in('estado', filtros.estados)
   if (filtros.fecha) {
     const { desde, hasta } = rangoDia(filtros.fecha)
-    q = q.gte('created_at', desde).lt('created_at', hasta)
+    q = q.gte('creado_en', desde).lt('creado_en', hasta)
   }
   if (filtros.guia?.trim()) q = q.ilike('numero_guia', `%${filtros.guia.trim()}%`)
 
@@ -86,7 +86,7 @@ export async function guardarOrden(
   const filas = items.map((i) => ({
     orden_id: ordenId,
     producto_id: i.producto_id,
-    cantidad: i.cantidad,
+    cantidad_pedida: i.cantidad,
   }))
   const { error: errIns } = await supabase.from('orden_items').insert(filas)
   if (errIns) throw new Error(errIns.message)

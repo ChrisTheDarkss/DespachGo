@@ -57,12 +57,12 @@ export default function OrdenForm() {
           setOrden(o)
           setGuia(o.numero_guia)
           setCliente(o.cliente_nombre)
-          setTelefono(o.telefono)
+          setTelefono(o.cliente_telefono)
           setDireccion(o.direccion)
           setNotas(o.notas ?? '')
-          setItems((o.orden_items ?? []).map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })))
-          if (o.lat != null && o.lng != null) {
-            setPos({ lat: o.lat, lng: o.lng })
+          setItems((o.orden_items ?? []).map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad_pedida })))
+          if (o.latitud != null && o.longitud != null) {
+            setPos({ lat: o.latitud, lng: o.longitud })
             setPinValidado(true)
           }
         }
@@ -143,11 +143,11 @@ export default function OrdenForm() {
         {
           numero_guia: g,
           cliente_nombre: cliente.trim(),
-          telefono: tel,
+          cliente_telefono: tel,
           direccion: direccion.trim(),
           notas: notas.trim() || null,
-          lat: pos.lat,
-          lng: pos.lng,
+          latitud: pos.lat,
+          longitud: pos.lng,
         },
         items,
         id,
