@@ -7,7 +7,26 @@
     "scheme": "despachgo",
     "userInterfaceStyle": "light",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "DespachGo usa tu ubicación para compartir tu posición durante la ruta activa.",
+          "locationAlwaysAndWhenInUsePermission": "DespachGo usa tu ubicación en segundo plano únicamente mientras tu ruta está activa.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "DespachGo necesita acceder a tus fotos para adjuntar las guías de despacho.",
+          "cameraPermission": "DespachGo necesita usar la cámara para fotografiar las guías de despacho.",
+          "microphonePermission": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

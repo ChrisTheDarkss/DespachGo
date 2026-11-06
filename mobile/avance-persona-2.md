@@ -41,3 +41,25 @@ Se preparó la base de la app móvil y se implementaron las primeras tareas de P
 ## Variables de entorno
 
 Copiar `.env.example` a `.env` dentro de `mobile` y completar `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` con la URL del proyecto y la clave pública anon. No usar una `SERVICE_ROLE_KEY` en la app.
+
+## Actualización: funcionalidades del conductor
+
+Se amplió la app más allá de las tareas iniciales descritas arriba. La interfaz continúa siendo provisional hasta recibir los wireframes.
+
+### Hecho
+
+- Se reemplazó la lista de prueba por la consulta de la ruta asignada al conductor en Supabase, con paradas, estados y opciones para iniciar la ruta.
+- Se añadieron el mapa de la ruta con paradas numeradas, el detalle de cada parada, la navegación externa y las acciones para reordenar u omitir paradas con motivo.
+- Se implementó el registro de entregas completas, parciales y fallidas, incluyendo cantidades por producto, motivos, fotos de guías con vista previa y destinatario opcional.
+- Se agregó una cola local para guardar entregas y fotos pendientes cuando no hay conexión, con sincronización posterior e indicador de pendientes. La confirmación evita envíos duplicados.
+- Se añadió el consentimiento de GPS, solicitud de permisos y seguimiento durante la ruta activa.
+- Se incorporaron el resumen y el cierre de ruta; no se permite finalizar mientras haya registros pendientes de sincronización.
+- Se solucionó el requisito nativo de MapLibre para la pantalla del mapa. Para usarlo, debe instalarse un development build que incluya el módulo nativo; Expo Go o un binario anterior no bastan.
+
+### Verificación y estado actual
+
+- Pasaron el chequeo de TypeScript y las exportaciones de Expo para web y Android.
+- El usuario confirmó que la app funciona después de instalar una build nueva.
+- La app consulta rutas existentes; no crea ni asigna rutas automáticamente. Si no aparece una ruta en la cuenta del conductor, falta crearla y asignarla desde el flujo de administración/backend de Supabase.
+- El ruteo vial requiere configurar un endpoint de la empresa; no se envían las coordenadas de clientes a un servicio público por defecto.
+- El seguimiento en segundo plano depende de la plataforma y los permisos; en web funciona mientras la pestaña está abierta.

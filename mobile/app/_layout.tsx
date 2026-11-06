@@ -1,15 +1,22 @@
-import { Stack, useRouter, useSegments } from "expo-router";
+import {
+  Stack,
+  useRootNavigationState,
+  useRouter,
+  useSegments,
+} from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { AuthProvider, useAuth } from "@/src/hooks/useAuth";
+import "@/src/services/gpsTracking";
 
 function Navigation() {
   const { session, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
 
   useEffect(() => {
-    if (isLoading) {
+    if (isLoading || !rootNavigationState?.key) {
       return;
     }
 
@@ -19,7 +26,7 @@ function Navigation() {
     } else if (session && isOnLogin) {
       router.replace("/(tabs)");
     }
-  }, [isLoading, router, segments, session]);
+  }, [isLoading, rootNavigationState?.key, router, segments, session]);
 
   return (
     <>
