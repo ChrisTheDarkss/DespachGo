@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { NavLink, Navigate, Outlet } from 'react-router-dom'
+import ConfirmDialog from './ConfirmDialog'
 import { useAuth } from '../hooks/useAuth'
+import { useAviso } from '../hooks/useAviso'
 
 const ENLACES = [
   { to: '/ordenes', texto: 'Órdenes' },
@@ -11,6 +14,8 @@ const ENLACES = [
 /** Estructura de las pantallas privadas; solo deja pasar a usuarios con rol admin. */
 export default function Layout() {
   const { session, perfil, cargando, cerrarSesion } = useAuth()
+  const { avisar } = useAviso()
+  const [saliendo, setSaliendo] = useState(false)
 
   if (cargando) return <p className="cargando">Cargando…</p>
   if (!session || perfil?.rol !== 'admin') return <Navigate to="/login" replace />
@@ -32,7 +37,7 @@ export default function Layout() {
         </nav>
         <div className="usuario">
           <span>{perfil.nombre}</span>
-          <button className="btn" onClick={cerrarSesion}>
+          <button className="btn" onClick={() => setSaliendo(true)}>
             Salir
           </button>
         </div>
@@ -40,6 +45,19 @@ export default function Layout() {
       <main className="contenido">
         <Outlet />
       </main>
+
+      {saliendo && (
+        <ConfirmDialog
+          titulo="Cerrar sesión"
+          descripcion="¿Quieres salir del panel?"
+          textoConfirmar="Salir"
+          onConfirmar={async () => {
+            await cerrarSesion()
+            avisar('info', 'Cerraste la sesión.')
+          }}
+          onCerrar={() => setSaliendo(false)}
+        />
+      )}
     </div>
   )
 }

@@ -44,6 +44,8 @@ export interface Orden {
   longitud: number | null
   estado: EstadoOrden
   motivo_cancelacion: string | null
+  /** Día previsto de entrega (YYYY-MM-DD) */
+  fecha_entrega: string
   creado_en: string
   orden_items?: {
     producto_id: string
@@ -60,6 +62,7 @@ export interface DatosOrden {
   notas: string | null
   latitud: number
   longitud: number
+  fecha_entrega: string
 }
 
 export interface Perfil {

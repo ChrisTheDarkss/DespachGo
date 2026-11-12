@@ -1,21 +1,31 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import EstadoBadge from '../components/EstadoBadge'
+import FechaDialog from '../components/FechaDialog'
 import MotivoDialog from '../components/MotivoDialog'
+import { useAviso } from '../hooks/useAviso'
+import { formatearFecha, hoyLocal } from '../lib/fechas'
 import { cancelarOrden, listarOrdenes, reprogramarOrden } from '../services/ordenes'
 import type { Orden } from '../types'
 
 export default function Pendientes() {
+  const { avisar } = useAviso()
   const [ordenes, setOrdenes] = useState<Orden[]>([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [aCancelar, setACancelar] = useState<Orden | null>(null)
-  const [ocupada, setOcupada] = useState<string | null>(null)
+  const [aReprogramar, setAReprogramar] = useState<Orden | null>(null)
 
   async function cargar() {
     setCargando(true)
     try {
-      setOrdenes(await listarOrdenes({ estados: ['fallida', 'entregada_parcial'] }))
+      const [resueltas, atrasadas] = await Promise.all([
+        listarOrdenes({ estados: ['fallida', 'entregada_parcial'] }),
+        // Pendientes cuya fecha de entrega ya pasó: hay que reagendarlas
+        listarOrdenes({ estado: 'pendiente', entregaAntesDe: hoyLocal() }),
+      ])
+      atrasadas.sort((a, b) => a.fecha_entrega.localeCompare(b.fecha_entrega))
+      setOrdenes([...atrasadas, ...resueltas])
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -28,15 +38,20 @@ export default function Pendientes() {
     cargar()
   }, [])
 
-  async function reprogramar(o: Orden) {
-    setOcupada(o.id)
+  async function confirmarReprogramacion(fecha: string) {
+    if (!aReprogramar) return
     try {
-      await reprogramarOrden(o.id)
+      await reprogramarOrden(aReprogramar.id, fecha)
+      avisar(
+        'exito',
+        `Orden ${aReprogramar.numero_guia} reprogramada para el ${formatearFecha(fecha)}.`,
+      )
+      setAReprogramar(null)
       await cargar()
     } catch (e) {
+      setAReprogramar(null)
       setError((e as Error).message)
-    } finally {
-      setOcupada(null)
+      avisar('error', (e as Error).message)
     }
   }
 
@@ -44,11 +59,13 @@ export default function Pendientes() {
     if (!aCancelar) return
     try {
       await cancelarOrden(aCancelar.id, motivo)
+      avisar('exito', `Orden ${aCancelar.numero_guia} cancelada.`)
       setACancelar(null)
       await cargar()
     } catch (e) {
       setACancelar(null)
       setError((e as Error).message)
+      avisar('error', (e as Error).message)
     }
   }
 
@@ -58,8 +75,9 @@ export default function Pendientes() {
         <h2>Pendientes de resolver</h2>
       </div>
       <p className="texto-suave">
-        Las paradas omitidas vuelven solas a «pendiente» al finalizar la ruta y aparecen en Órdenes
-        y en Armar ruta.
+        Aquí aparecen las órdenes fallidas, las entregas parciales y las pendientes cuya fecha de
+        entrega ya pasó (por ejemplo, paradas omitidas). Para las fallidas y las atrasadas puedes
+        elegir una nueva fecha de entrega con «Reprogramar».
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -71,6 +89,7 @@ export default function Pendientes() {
               <th>Guía</th>
               <th>Cliente</th>
               <th>Dirección</th>
+              <th>Entrega</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -78,14 +97,14 @@ export default function Pendientes() {
           <tbody>
             {cargando && (
               <tr>
-                <td colSpan={5} className="texto-suave">
+                <td colSpan={6} className="texto-suave">
                   Cargando…
                 </td>
               </tr>
             )}
             {!cargando && ordenes.length === 0 && (
               <tr>
-                <td colSpan={5} className="texto-suave">
+                <td colSpan={6} className="texto-suave">
                   No hay nada por resolver.
                 </td>
               </tr>
@@ -99,15 +118,18 @@ export default function Pendientes() {
                   <td>{o.cliente_nombre}</td>
                   <td>{o.direccion}</td>
                   <td>
+                    {formatearFecha(o.fecha_entrega)}
+                    {o.estado === 'pendiente' && <small className="error"> atrasada</small>}
+                  </td>
+                  <td>
                     <EstadoBadge estado={o.estado} />
                   </td>
                   <td>
-                    {o.estado === 'fallida' ? (
+                    {o.estado === 'fallida' || o.estado === 'pendiente' ? (
                       <div className="acciones">
                         <button
                           className="btn btn-primario"
-                          onClick={() => reprogramar(o)}
-                          disabled={ocupada === o.id}
+                          onClick={() => setAReprogramar(o)}
                         >
                           Reprogramar
                         </button>
@@ -127,6 +149,16 @@ export default function Pendientes() {
           </tbody>
         </table>
       </div>
+
+      {aReprogramar && (
+        <FechaDialog
+          titulo={`Reprogramar orden ${aReprogramar.numero_guia}`}
+          descripcion="La orden queda «pendiente» con la nueva fecha de entrega y podrás incluirla en una ruta."
+          textoConfirmar="Reprogramar"
+          onConfirmar={confirmarReprogramacion}
+          onCerrar={() => setAReprogramar(null)}
+        />
+      )}
 
       {aCancelar && (
         <MotivoDialog

@@ -1,19 +1,24 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import EstadoBadge from '../components/EstadoBadge'
-import { formatearFechaHora } from '../lib/fechas'
+import FechaDialog from '../components/FechaDialog'
+import { useAviso } from '../hooks/useAviso'
+import { formatearFecha, formatearFechaHora, hoyLocal } from '../lib/fechas'
 import { formatearTelefono } from '../lib/telefono'
-import { listarOrdenes } from '../services/ordenes'
+import { listarOrdenes, reprogramarOrden } from '../services/ordenes'
 import { ESTADOS_ORDEN } from '../types'
 import type { EstadoOrden, Orden } from '../types'
 
 export default function Ordenes() {
+  const { avisar } = useAviso()
   const [estado, setEstado] = useState<EstadoOrden | ''>('')
   const [fecha, setFecha] = useState('')
   const [guia, setGuia] = useState('')
   const [ordenes, setOrdenes] = useState<Orden[]>([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [aReprogramar, setAReprogramar] = useState<Orden | null>(null)
+  const [recarga, setRecarga] = useState(0)
 
   useEffect(() => {
     let activo = true
@@ -33,9 +38,27 @@ export default function Ordenes() {
       activo = false
       clearTimeout(t)
     }
-  }, [estado, fecha, guia])
+  }, [estado, fecha, guia, recarga])
+
+  async function confirmarReprogramacion(nuevaFecha: string) {
+    if (!aReprogramar) return
+    try {
+      await reprogramarOrden(aReprogramar.id, nuevaFecha)
+      avisar(
+        'exito',
+        `Orden ${aReprogramar.numero_guia} reprogramada para el ${formatearFecha(nuevaFecha)}.`,
+      )
+      setAReprogramar(null)
+      setRecarga((n) => n + 1)
+    } catch (e) {
+      setAReprogramar(null)
+      setError((e as Error).message)
+      avisar('error', (e as Error).message)
+    }
+  }
 
   const hayFiltros = estado !== '' || fecha !== '' || guia !== ''
+  const hoy = hoyLocal()
 
   return (
     <div>
@@ -63,7 +86,7 @@ export default function Ordenes() {
           </select>
         </label>
         <label className="campo">
-          <span>Fecha de creación</span>
+          <span>Fecha de entrega</span>
           <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
         </label>
         {hayFiltros && (
@@ -91,6 +114,7 @@ export default function Ordenes() {
               <th>Teléfono</th>
               <th>Dirección</th>
               <th>Productos</th>
+              <th>Entrega</th>
               <th>Estado</th>
               <th>Creada</th>
               <th></th>
@@ -99,14 +123,14 @@ export default function Ordenes() {
           <tbody>
             {cargando && (
               <tr>
-                <td colSpan={8} className="texto-suave">
+                <td colSpan={9} className="texto-suave">
                   Cargando…
                 </td>
               </tr>
             )}
             {!cargando && ordenes.length === 0 && (
               <tr>
-                <td colSpan={8} className="texto-suave">
+                <td colSpan={9} className="texto-suave">
                   No hay órdenes con estos filtros.
                 </td>
               </tr>
@@ -126,19 +150,43 @@ export default function Ordenes() {
                       .join(', ')}
                   </td>
                   <td>
+                    {formatearFecha(o.fecha_entrega)}
+                    {o.estado === 'pendiente' && o.fecha_entrega < hoy && (
+                      <small className="error"> atrasada</small>
+                    )}
+                  </td>
+                  <td>
                     <EstadoBadge estado={o.estado} />
                   </td>
                   <td>{formatearFechaHora(o.creado_en)}</td>
                   <td>
-                    <Link to={`/ordenes/${o.id}`} className="btn">
-                      Ver / editar
-                    </Link>
+                    <div className="acciones">
+                      <Link to={`/ordenes/${o.id}`} className="btn">
+                        Ver / editar
+                      </Link>
+                      {(o.estado === 'fallida' ||
+                        (o.estado === 'pendiente' && o.fecha_entrega < hoy)) && (
+                        <button className="btn btn-primario" onClick={() => setAReprogramar(o)}>
+                          Reprogramar
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
           </tbody>
         </table>
       </div>
+
+      {aReprogramar && (
+        <FechaDialog
+          titulo={`Reprogramar orden ${aReprogramar.numero_guia}`}
+          descripcion="La orden queda «pendiente» con la nueva fecha de entrega y podrás incluirla en una ruta."
+          textoConfirmar="Reprogramar"
+          onConfirmar={confirmarReprogramacion}
+          onCerrar={() => setAReprogramar(null)}
+        />
+      )}
     </div>
   )
 }

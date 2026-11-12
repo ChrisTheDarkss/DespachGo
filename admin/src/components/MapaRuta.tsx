@@ -47,7 +47,7 @@ export default function MapaRuta({ puntos }: { puntos: PuntoMapa[] }) {
       {puntos.length > 1 && (
         <Polyline
           positions={puntos.map((p) => [p.lat, p.lng] as [number, number])}
-          pathOptions={{ color: '#1d4ed8', weight: 3, opacity: 0.6, dashArray: '6 6' }}
+          pathOptions={{ color: '#15803d', weight: 3, opacity: 0.6, dashArray: '6 6' }}
         />
       )}
       {puntos.map((p) => (

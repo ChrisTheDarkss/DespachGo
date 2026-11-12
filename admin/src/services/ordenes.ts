@@ -1,11 +1,12 @@
 import { supabase } from '../lib/supabase'
-import { rangoDia } from '../lib/fechas'
 import type { DatosOrden, EstadoOrden, ItemOrden, Orden } from '../types'
 
 export interface FiltrosOrdenes {
   estado?: EstadoOrden | ''
   estados?: EstadoOrden[]
   fecha?: string
+  /** Solo órdenes con fecha de entrega anterior a esta (YYYY-MM-DD), p. ej. las atrasadas */
+  entregaAntesDe?: string
   guia?: string
 }
 
@@ -20,10 +21,9 @@ export async function listarOrdenes(filtros: FiltrosOrdenes = {}): Promise<Orden
 
   if (filtros.estado) q = q.eq('estado', filtros.estado)
   if (filtros.estados && filtros.estados.length > 0) q = q.in('estado', filtros.estados)
-  if (filtros.fecha) {
-    const { desde, hasta } = rangoDia(filtros.fecha)
-    q = q.gte('creado_en', desde).lt('creado_en', hasta)
-  }
+  // Filtra por la fecha de entrega prevista (YYYY-MM-DD)
+  if (filtros.fecha) q = q.eq('fecha_entrega', filtros.fecha)
+  if (filtros.entregaAntesDe) q = q.lt('fecha_entrega', filtros.entregaAntesDe)
   if (filtros.guia?.trim()) q = q.ilike('numero_guia', `%${filtros.guia.trim()}%`)
 
   const { data, error } = await q
@@ -56,42 +56,22 @@ export async function guiaExiste(guia: string, excluirId?: string): Promise<bool
 const MSG_GUIA_DUPLICADA = 'Ya existe una orden con ese número de guía.'
 
 /**
- * Crea o actualiza una orden y reemplaza sus productos.
- * Nota: son varias llamadas; si más adelante se necesita atomicidad,
- * moverlo a una función SQL (rpc) en Supabase.
+ * Crea o actualiza una orden y sus productos con la función SQL guardar_orden
+ * (migración 007): una sola transacción, sin borrar filas desde el panel.
+ * Solo se pueden editar órdenes pendientes.
  */
 export async function guardarOrden(
   datos: DatosOrden,
   items: ItemOrden[],
   id?: string,
 ): Promise<string> {
-  let ordenId = id
-
-  if (id) {
-    const { error } = await supabase.from('ordenes').update(datos).eq('id', id)
-    if (error) throw new Error(error.code === '23505' ? MSG_GUIA_DUPLICADA : error.message)
-
-    const { error: errDel } = await supabase.from('orden_items').delete().eq('orden_id', id)
-    if (errDel) throw new Error(errDel.message)
-  } else {
-    const { data, error } = await supabase
-      .from('ordenes')
-      .insert({ ...datos, estado: 'pendiente' })
-      .select('id')
-      .single()
-    if (error) throw new Error(error.code === '23505' ? MSG_GUIA_DUPLICADA : error.message)
-    ordenId = (data as { id: string }).id
-  }
-
-  const filas = items.map((i) => ({
-    orden_id: ordenId,
-    producto_id: i.producto_id,
-    cantidad_pedida: i.cantidad,
-  }))
-  const { error: errIns } = await supabase.from('orden_items').insert(filas)
-  if (errIns) throw new Error(errIns.message)
-
-  return ordenId as string
+  const { data, error } = await supabase.rpc('guardar_orden', {
+    p_orden_id: id ?? null,
+    p_datos: datos,
+    p_items: items,
+  })
+  if (error) throw new Error(error.code === '23505' ? MSG_GUIA_DUPLICADA : error.message)
+  return data as string
 }
 
 /** Cancelar no borra: la orden queda en estado «cancelada» con motivo. */
@@ -103,8 +83,14 @@ export async function cancelarOrden(id: string, motivo: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
-/** Devuelve una orden fallida a pendiente para incluirla en una nueva ruta. */
-export async function reprogramarOrden(id: string): Promise<void> {
-  const { error } = await supabase.from('ordenes').update({ estado: 'pendiente' }).eq('id', id)
+/**
+ * Devuelve una orden fallida a pendiente con una NUEVA fecha de entrega
+ * (función SQL reprogramar_orden, migración 008).
+ */
+export async function reprogramarOrden(id: string, fechaEntrega: string): Promise<void> {
+  const { error } = await supabase.rpc('reprogramar_orden', {
+    p_orden: id,
+    p_fecha: fechaEntrega,
+  })
   if (error) throw new Error(error.message)
 }

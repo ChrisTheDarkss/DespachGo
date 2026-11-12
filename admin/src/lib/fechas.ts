@@ -1,6 +1,12 @@
-/** Fecha local de hoy en formato YYYY-MM-DD. */
+/** Fecha de hoy en Santiago (la misma que usa la base de datos), formato YYYY-MM-DD. */
 export function hoyLocal(): string {
-  return new Date().toLocaleDateString('sv-SE')
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Santiago' })
+}
+
+/** Formatea una fecha YYYY-MM-DD (sin hora) como dd/mm/aaaa, sin desfases de zona horaria. */
+export function formatearFecha(fecha: string): string {
+  const [a, m, d] = fecha.split('-')
+  return `${d}/${m}/${a}`
 }
 
 /** Inicio del día local (ISO) y del día siguiente, para filtrar por creado_en. */
