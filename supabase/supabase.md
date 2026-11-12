@@ -66,10 +66,16 @@ asignar_ruta, iniciar_ruta, reintentar, finalizar_ruta y el cálculo del resulta
 | `migrations/004_reglas_de_acceso.sql` | reglas de acceso (RLS), permisos, triggers y bucket privado `entregas` |
 | `migrations/005_funciones_ruta_entrega.sql` | tabla `configuracion` y las funciones de ruta y entrega (ver abajo) |
 | `migrations/006_cierre_nocturno.sql` | cierre automático de rutas olvidadas con pg_cron |
+| `migrations/007_guardar_orden.sql` | función `guardar_orden`: crea o edita una orden y sus productos en una transacción (el panel la usa) |
+| `migrations/008_fecha_entrega.sql` | fecha de entrega de cada orden (`ordenes.fecha_entrega`), `guardar_orden` actualizada y la función `reprogramar_orden` |
+| `migrations/009_funciones_bot.sql` | funciones del bot de WhatsApp: reservar mensajes de la cola, marcar enviado o con error, y registrar respuestas 1/2/3 (solo `service_role`) |
+| `migrations/010_realtime.sql` | activa Realtime en `paradas` (la app ve las respuestas de los clientes al instante) y `ubicaciones_conductor` |
 | `seed.sql` | catálogo de ejemplo y 20 órdenes de prueba (ficticias) |
 | `seed_usuarios.sql` | perfiles de 1 admin y 3 conductores de prueba (hay que crear antes los usuarios en Auth) |
 | `tests/rls_prueba.sql` | comprueba que cada conductor ve solo lo suyo y que nadie borra |
 | `tests/funciones_prueba.sql` | recorre el flujo completo de un día de despacho con las funciones |
+| `tests/guardar_orden_prueba.sql` | comprueba crear y editar órdenes con `guardar_orden` |
+| `tests/bot_prueba.sql` | comprueba la cola del bot y la interpretación de respuestas |
 
 **Pendiente (siguientes avances):** funciones del admin para «Pendientes de resolver» (reprogramar, cancelar, crear orden con el saldo) y el bot de WhatsApp.
 
@@ -149,3 +155,58 @@ Los textos de `mensaje_una_guia` y `mensaje_varias_guias` aceptan `{nombre}`, `{
 ## Cómo probar las funciones
 
 Después de aplicar `005` y `006` con `supabase db push`, ejecutar `tests/funciones_prueba.sql` en el SQL Editor. Debe terminar con `FUNCIONES OK`. Si algo falla, muestra `FALLO:` con el motivo.
+
+## Edge Functions: geocodificar y optimizar-ruta
+
+Las usa el panel (botón de dirección y botón **Optimizar**). Están en `supabase/functions/`:
+
+| Carpeta | Qué hace |
+|---|---|
+| `geocodificar/` | Convierte una dirección de Temuco en coordenadas con Nominatim (máx. 1 consulta por segundo, caché, User-Agent propio) |
+| `optimizar-ruta/` | Ordena las paradas con OpenRouteService; si no responde, no hay clave o se pasó el límite diario, las ordena por cercanía (plan B) |
+| `_shared/` | Código común: verificación de administrador, CORS, ordenamiento local, validación y lectura de OpenRouteService |
+
+Quién puede usarlas: **solo un administrador con sesión**. Se despliegan con `--no-verify-jwt` y cada una comprueba por dentro, con la función SQL `es_admin()`, quién llama (la verificación automática de Supabase no distingue usuarios: una clave pública también pasaría).
+
+### Secretos (se guardan en Supabase, nunca en Git)
+
+| Secreto | Para qué | Obligatorio |
+|---|---|---|
+| `ORS_API_KEY` | Clave de OpenRouteService | No: sin ella optimiza por cercanía |
+| `NOMINATIM_CONTACTO` | Correo que identifica al proyecto ante Nominatim | Sí, por su política de uso |
+| `BODEGA_LAT`, `BODEGA_LNG` | Coordenadas de la bodega, de donde parte cada ruta | Recomendado; sin ellas la ruta parte de la primera parada elegida |
+
+```
+npx supabase secrets set NOMINATIM_CONTACTO=correo@ejemplo.cl BODEGA_LAT=-38.74 BODEGA_LNG=-72.59
+npx supabase secrets set ORS_API_KEY=<tu clave>
+```
+
+Las coordenadas de arriba son de ejemplo: usa las de tu bodega real. Para no dejar la clave en el historial de la terminal, también puedes cargarla en el panel de Supabase: *Edge Functions → Secrets*.
+
+### Desplegar
+
+```
+npx supabase functions deploy geocodificar --no-verify-jwt
+npx supabase functions deploy optimizar-ruta --no-verify-jwt
+```
+
+Si el proyecto tiene `supabase/config.toml`, puedes dejar fija la opción:
+
+```toml
+[functions.geocodificar]
+verify_jwt = false
+
+[functions.optimizar-ruta]
+verify_jwt = false
+```
+
+### Probarlas
+
+1. **Seguridad (sin sesión debe rechazar):**
+   ```
+   curl -i -X POST https://<ref>.supabase.co/functions/v1/optimizar-ruta -H "apikey: <clave publishable>" -H "Content-Type: application/json" -d "{}"
+   ```
+   Debe responder `401` con «Debes iniciar sesión». Con un conductor con sesión debe dar `403`.
+2. **Desde el panel:** entra como admin, en *Armar ruta* marca 3 o más órdenes y pulsa **Optimizar**. Para saber si usó OpenRouteService o el plan B, mira los registros en *Edge Functions → optimizar-ruta → Logs*.
+3. **Pruebas del código puro** (ordenamiento, validación y lectura de OpenRouteService), sin red:
+   `deno test supabase/functions/_shared/optimizacion.test.ts`

@@ -9,7 +9,11 @@
 --    reales (tarea 5-05).
 --  * Los teléfonos +569000000NN son ficticios. Para probar el bot, cambiar
 --    algunos por números conocidos del equipo (formato +569XXXXXXXX).
---  * Se puede ejecutar más de una vez (no duplica).
+--  * Se puede ejecutar más de una vez (no duplica). Las fechas de entrega se
+--    reparten entre hoy, mañana y pasado mañana (requiere la migración 008).
+--    Para repartirlas en órdenes que ya estaban cargadas:
+--      update public.ordenes set fecha_entrega = public.hoy_santiago() + (numero % 3)::int
+--      where numero_guia like 'G-%' and estado = 'pendiente';
 --  * Los usuarios (admin y conductores) se crean aparte: ver seed_usuarios.sql
 -- =====================================================================
 
@@ -56,7 +60,8 @@ begin
     v_orden := null;  -- evita arrastrar el id de la vuelta anterior si hubo conflicto
 
     insert into public.ordenes
-      (numero_guia, cliente_nombre, cliente_telefono, direccion, comuna, latitud, longitud, notas)
+      (numero_guia, cliente_nombre, cliente_telefono, direccion, comuna, latitud, longitud, notas,
+       fecha_entrega)
     values (
       'G-' || lpad(i::text, 4, '0'),
       'Cliente Prueba ' || lpad(i::text, 2, '0'),
@@ -65,7 +70,8 @@ begin
       case when i in (12, 19) then 'Padre Las Casas' else 'Temuco' end,
       latitudes[i],
       longitudes[i],
-      case when i % 5 = 0 then 'Tocar el timbre dos veces' else null end
+      case when i % 5 = 0 then 'Tocar el timbre dos veces' else null end,
+      public.hoy_santiago() + (i % 3)   -- reparte las entregas: hoy, mañana y pasado mañana
     )
     on conflict (numero_guia) do nothing
     returning id into v_orden;
