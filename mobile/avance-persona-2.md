@@ -59,6 +59,7 @@ Se amplió la app más allá de las tareas iniciales descritas arriba. La interf
 ### Verificación y estado actual
 
 - Pasaron el chequeo de TypeScript y las exportaciones de Expo para web y Android.
+- Las pantallas «Registrar entrega» y «Reportar entrega fallida» usan rutas dedicadas (`/delivery/[stopId]` y `/delivery/failed/[stopId]`) y reciben explícitamente el UUID de la parada. Esto evita que un segmento estático como `delivery` se interprete como el parámetro UUID de la ruta dinámica.
 - El usuario confirmó que la app funciona después de instalar una build nueva.
 - La app consulta rutas existentes; no crea ni asigna rutas automáticamente. Si no aparece una ruta en la cuenta del conductor, falta crearla y asignarla desde el flujo de administración/backend de Supabase.
 - El ruteo vial requiere configurar un endpoint de la empresa; no se envían las coordenadas de clientes a un servicio público por defecto.

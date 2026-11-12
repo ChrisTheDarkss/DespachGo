@@ -177,7 +177,7 @@ export default function GpsConsentScreen() {
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.loading}>
           <ActivityIndicator size="large" color="#176447" />
-          <Text style={styles.bodyText}>Validando la ruta...</Text>
+          <Text style={styles.intro}>Validando la ruta...</Text>
         </View>
       </SafeAreaView>
     );
@@ -185,92 +185,121 @@ export default function GpsConsentScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
+      <View style={styles.screen}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.backText}>‹  Volver</Text>
-        </Pressable>
-        <Text style={styles.eyebrow}>PRIVACIDAD Y SEGURIDAD</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Consentimiento de ubicación
-        </Text>
-        <Text style={styles.bodyText}>
-          Para iniciar y completar tu ruta, DespachGo compartirá tu ubicación
-          con la empresa mientras la ruta esté activa.
-        </Text>
+          <View style={styles.hero} accessibilityElementsHidden>
+            <View style={styles.heroRing}>
+              <View style={styles.heroIcon}>
+                <Text style={styles.pinGlyph}>⌖</Text>
+              </View>
+              <View style={styles.shieldBadge}>
+                <Text style={styles.shieldGlyph}>✓</Text>
+              </View>
+            </View>
+          </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Cómo se usará el GPS</Text>
-          <Text style={styles.bullet}>
-            • Se actualizará aproximadamente cada 30 segundos o al avanzar 100 metros.
+          <Text style={styles.eyebrow}>TU UBICACIÓN, CON UN PROPÓSITO</Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            Activa el GPS para acompañar tu ruta
           </Text>
-          <Text style={styles.bullet}>
-            • La base de datos conserva solo la última posición del conductor, no un historial de recorridos.
+          <Text style={styles.intro}>
+            Usamos tu ubicación durante la ruta activa para orientar tus
+            entregas y mantener informado al equipo.
           </Text>
-          <Text style={styles.bullet}>
-            • El seguimiento se detiene al finalizar la ruta. Puedes detenerlo desde los ajustes del dispositivo, pero la ruta seguirá activa hasta que la finalices en la app.
-          </Text>
-          <Text style={styles.bullet}>
-            • Se requiere permiso de ubicación en primer plano y, en móviles, en segundo plano para mantener el seguimiento con la app minimizada.
-          </Text>
+
+          <View style={styles.featureList}>
+            <View style={styles.feature}>
+              <View style={styles.featureIcon}>
+                <Text style={styles.featureGlyph}>↗</Text>
+              </View>
+              <View style={styles.featureCopy}>
+                <Text style={styles.featureTitle}>Llega a cada cliente</Text>
+                <Text style={styles.featureText}>
+                  Se actualiza aproximadamente cada 30 segundos o al avanzar
+                  100 metros.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.feature}>
+              <View style={styles.featureIcon}>
+                <Text style={styles.featureGlyph}>◉</Text>
+              </View>
+              <View style={styles.featureCopy}>
+                <Text style={styles.featureTitle}>
+                  Coordina con operaciones
+                </Text>
+                <Text style={styles.featureText}>
+                  Se conserva solo tu última posición, no un historial de
+                  recorridos.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.feature}>
+              <View style={styles.featureIcon}>
+                <Text style={styles.featureGlyph}>✓</Text>
+              </View>
+              <View style={styles.featureCopy}>
+                <Text style={styles.featureTitle}>Solo durante tu jornada</Text>
+                <Text style={styles.featureText}>
+                  El seguimiento se detiene al finalizar la ruta. Si lo
+                  detienes desde los ajustes del dispositivo, la ruta seguirá
+                  activa hasta que la finalices en la app.
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.infoNote}>
+            <Text style={styles.infoGlyph}>ⓘ</Text>
+            <View style={styles.infoCopy}>
+              <Text style={styles.infoTitle}>Tú decides</Text>
+              <Text style={styles.infoText}>
+                Se requiere permiso de ubicación en primer plano y, en móviles,
+                en segundo plano para mantener el seguimiento con la app
+                minimizada. Si eliges «Ahora no», podrás revisar tu ruta sin
+                iniciar el seguimiento.
+              </Text>
+            </View>
+          </View>
+
           {Platform.OS === "web" ? (
             <Text style={styles.webNotice}>
-              En navegador, la ubicación solo se actualiza mientras esta pestaña permanezca abierta.
+              En navegador, la ubicación solo se actualiza mientras esta
+              pestaña permanezca abierta.
             </Text>
           ) : null}
-        </View>
 
-        {error ? (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
-          </Text>
-        ) : null}
-
-        {canOpenSettings ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void Linking.openSettings()}
-            style={styles.secondaryButton}
-          >
-            <Text style={styles.secondaryButtonText}>
-              Abrir ajustes de ubicación
+          {error ? (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {error}
             </Text>
-          </Pressable>
-        ) : null}
+          ) : null}
 
-        {routeIsStarted ? (
-          <>
+          {canOpenSettings ? (
             <Pressable
               accessibilityRole="button"
-              disabled={isWorking || !isRouteValid}
-              onPress={() => void handleRetryTracking()}
-              style={[
-                styles.primaryButton,
-                (isWorking || !isRouteValid) && styles.disabledButton,
-              ]}
+              onPress={() => void Linking.openSettings()}
+              style={styles.settingsButton}
             >
-              {isWorking ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.primaryButtonText}>Reintentar GPS</Text>
-              )}
+              <Text style={styles.settingsButtonText}>
+                Abrir ajustes de ubicación
+              </Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.replace("/(tabs)")}
-              style={styles.secondaryButton}
-            >
-              <Text style={styles.secondaryButtonText}>Volver a mi ruta</Text>
-            </Pressable>
-          </>
-        ) : (
+          ) : null}
+        </ScrollView>
+
+        <View style={styles.footer}>
           <Pressable
             accessibilityRole="button"
             disabled={isWorking || !isRouteValid}
-            onPress={() => void handleConsent()}
+            onPress={() =>
+              void (routeIsStarted
+                ? handleRetryTracking()
+                : handleConsent())
+            }
             style={[
               styles.primaryButton,
               (isWorking || !isRouteValid) && styles.disabledButton,
@@ -280,19 +309,40 @@ export default function GpsConsentScreen() {
               <ActivityIndicator color="#ffffff" />
             ) : (
               <Text style={styles.primaryButtonText}>
-                Acepto y {shouldResume ? "activar GPS" : "comenzar ruta"}
+                {routeIsStarted
+                  ? "Reintentar GPS"
+                  : "⌖  Aceptar y activar GPS"}
               </Text>
             )}
           </Pressable>
-        )}
-      </ScrollView>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isWorking}
+            onPress={() => router.replace("/(tabs)")}
+            style={[
+              styles.secondaryButton,
+              isWorking && styles.disabledButton,
+            ]}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {routeIsStarted ? "Volver a mi ruta" : "Ahora no"}
+            </Text>
+          </Pressable>
+          <Text style={styles.footerHint}>
+            Puedes cambiar este permiso en Ajustes del teléfono.
+          </Text>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#f5f7f5",
+    backgroundColor: "#f7f9f7",
+    flex: 1,
+  },
+  screen: {
     flex: 1,
   },
   loading: {
@@ -303,93 +353,210 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   content: {
-    gap: 16,
-    padding: 20,
-    paddingBottom: 36,
-  },
-  backButton: {
-    alignSelf: "flex-start",
-    justifyContent: "center",
-    minHeight: 40,
-  },
-  backText: {
-    color: "#176447",
-    fontSize: 15,
-    fontWeight: "700",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 20,
   },
   eyebrow: {
-    color: "#bd641f",
-    fontSize: 12,
+    color: "#176447",
+    fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 1,
+    letterSpacing: 0.3,
+    marginTop: 2,
   },
   title: {
     color: "#20342a",
-    fontSize: 26,
+    fontSize: 23,
     fontWeight: "700",
+    lineHeight: 29,
   },
-  bodyText: {
+  intro: {
     color: "#52645a",
-    fontSize: 15,
-    lineHeight: 23,
+    fontSize: 13,
+    lineHeight: 19,
   },
-  card: {
-    backgroundColor: "#ffffff",
-    borderColor: "#e0e5e1",
-    borderRadius: 12,
+  hero: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+    marginTop: 2,
+  },
+  heroRing: {
+    alignItems: "center",
+    backgroundColor: "#eaf4ef",
+    borderColor: "#d7e9df",
+    borderRadius: 80,
     borderWidth: 1,
-    gap: 12,
-    padding: 16,
+    height: 136,
+    justifyContent: "center",
+    width: 136,
   },
-  sectionTitle: {
-    color: "#20342a",
+  heroIcon: {
+    alignItems: "center",
+    backgroundColor: "#176447",
+    borderRadius: 18,
+    height: 58,
+    justifyContent: "center",
+    width: 58,
+  },
+  pinGlyph: {
+    color: "#ffffff",
+    fontSize: 37,
+    lineHeight: 44,
+  },
+  shieldBadge: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    bottom: 18,
+    height: 30,
+    justifyContent: "center",
+    position: "absolute",
+    right: 24,
+    width: 30,
+  },
+  shieldGlyph: {
+    color: "#176447",
     fontSize: 17,
     fontWeight: "700",
   },
-  bullet: {
+  featureList: {
+    gap: 16,
+    marginTop: 4,
+  },
+  feature: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 10,
+  },
+  featureIcon: {
+    alignItems: "center",
+    backgroundColor: "#edf5f0",
+    borderRadius: 9,
+    height: 28,
+    justifyContent: "center",
+    marginTop: 1,
+    width: 28,
+  },
+  featureGlyph: {
+    color: "#176447",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  featureCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  featureTitle: {
+    color: "#263c31",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  featureText: {
     color: "#52645a",
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  infoNote: {
+    alignItems: "flex-start",
+    backgroundColor: "#eaf4ef",
+    borderRadius: 10,
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 2,
+    padding: 10,
+  },
+  infoGlyph: {
+    color: "#176447",
     fontSize: 14,
-    lineHeight: 21,
+    fontWeight: "700",
+    marginTop: 1,
+  },
+  infoCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  infoTitle: {
+    color: "#263c31",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  infoText: {
+    color: "#52645a",
+    fontSize: 10,
+    lineHeight: 14,
   },
   webNotice: {
     backgroundColor: "#fff0e3",
     borderRadius: 8,
     color: "#8c4a1b",
-    fontSize: 13,
-    lineHeight: 20,
-    padding: 10,
+    fontSize: 11,
+    lineHeight: 16,
+    padding: 8,
   },
   error: {
     color: "#a3352c",
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  settingsButton: {
+    alignItems: "center",
+    borderColor: "#176447",
+    borderRadius: 9,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 42,
+    padding: 10,
+  },
+  settingsButtonText: {
+    color: "#176447",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  footer: {
+    backgroundColor: "#f7f9f7",
+    borderTopColor: "#e8ede9",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingTop: 10,
   },
   primaryButton: {
     alignItems: "center",
     backgroundColor: "#176447",
-    borderRadius: 10,
+    borderRadius: 9,
     justifyContent: "center",
-    minHeight: 52,
-    padding: 14,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   primaryButtonText: {
     color: "#ffffff",
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: "700",
     textAlign: "center",
   },
   secondaryButton: {
     alignItems: "center",
-    backgroundColor: "#eaf2ed",
-    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    borderColor: "#e0e8e2",
+    borderRadius: 9,
+    borderWidth: 1,
     justifyContent: "center",
-    minHeight: 46,
-    padding: 12,
+    minHeight: 40,
+    padding: 9,
   },
   secondaryButtonText: {
     color: "#176447",
-    fontSize: 14,
-    fontWeight: "700",
+    fontSize: 12,
+  },
+  footerHint: {
+    color: "#78877e",
+    fontSize: 9,
+    lineHeight: 13,
+    paddingBottom: 2,
+    textAlign: "center",
   },
   disabledButton: {
     opacity: 0.5,

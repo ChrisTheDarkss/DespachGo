@@ -39,8 +39,8 @@ const differenceReasons: {
 ];
 
 export default function RegisterDeliveryScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const stopId = Array.isArray(id) ? id[0] : id;
+  const { stopId: stopIdParam } = useLocalSearchParams<{ stopId: string }>();
+  const stopId = Array.isArray(stopIdParam) ? stopIdParam[0] : stopIdParam;
   const router = useRouter();
   const { session } = useAuth();
   const userId = session?.user.id;
@@ -439,7 +439,12 @@ export default function RegisterDeliveryScreen() {
         {isAllZero ? (
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push("../failed")}
+            onPress={() =>
+              router.push({
+                pathname: "/delivery/failed/[stopId]",
+                params: { stopId },
+              })
+            }
             style={styles.secondaryButton}
           >
             <Text style={styles.secondaryButtonText}>

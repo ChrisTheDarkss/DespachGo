@@ -162,6 +162,14 @@ export default function TodayRouteScreen() {
     (count, action) => count + action.photos.length,
     0,
   );
+  const guideCount = stops.reduce(
+    (count, stop) => count + stop.ordenes.length,
+    0,
+  );
+  const remainingStopCount = stops.filter(
+    (stop) => stop.estado !== "entregada" && stop.estado !== "omitida",
+  ).length;
+  const routeDateLabel = route ? formatRouteDate(route.fecha) : null;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -169,53 +177,69 @@ export default function TodayRouteScreen() {
         contentContainerStyle={styles.listContent}
         data={stops}
         keyExtractor={(stop) => stop.id}
-        refreshControl={
-          <RefreshControl
-            colors={["#176447"]}
-            onRefresh={() => void loadRoute(true)}
-            refreshing={isRefreshing}
-            tintColor="#176447"
-          />
-        }
         ListHeaderComponent={
           <View style={styles.header}>
-            <Text style={styles.eyebrow}>DESPACHOS</Text>
+            <View style={styles.topBar}>
+              <Text style={styles.brand}>DESPACHGO</Text>
+              {routeDateLabel ? (
+                <Text style={styles.dateLabel}>{routeDateLabel}</Text>
+              ) : null}
+            </View>
             <Text accessibilityRole="header" style={styles.title}>
               Mi ruta de hoy
             </Text>
             {route ? (
               <>
-                <View
-                  style={[
-                    styles.routeBadge,
-                    route.estado === "en_curso" && styles.routeBadgeActive,
-                  ]}
-                >
-                  <Text
+                <View style={styles.routeSummary}>
+                  <View
                     style={[
-                      styles.routeBadgeText,
-                      route.estado === "en_curso" &&
-                        styles.routeBadgeTextActive,
+                      styles.routeBadge,
+                      route.estado === "en_curso" && styles.routeBadgeActive,
                     ]}
                   >
-                    {route.estado === "en_curso"
-                      ? "Ruta en curso"
-                      : "Ruta asignada"}
-                  </Text>
+                    <Text
+                      style={[
+                        styles.routeBadgeText,
+                        route.estado === "en_curso" &&
+                          styles.routeBadgeTextActive,
+                      ]}
+                    >
+                      {route.estado === "en_curso" ? "En curso" : "Sin iniciar"}
+                    </Text>
+                  </View>
+                  {route.offlineCopy ? (
+                    <Text style={styles.offlineTag}>Sin conexión</Text>
+                  ) : null}
                 </View>
-                <Text style={styles.count}>
-                  {stops.length} {stops.length === 1 ? "parada" : "paradas"}
-                </Text>
+                <View style={styles.stats}>
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{stops.length}</Text>
+                    <Text style={styles.statLabel}>paradas</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{guideCount}</Text>
+                    <Text style={styles.statLabel}>
+                      {guideCount === 1 ? "guía" : "guías"}
+                    </Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{remainingStopCount}</Text>
+                    <Text style={styles.statLabel}>por visitar</Text>
+                  </View>
+                </View>
                 {route.offlineCopy ? (
                   <Text style={styles.offlineNotice}>
-                    Sin conexión. Mostrando la última ruta guardada.
+                    Mostrando la última ruta guardada. Algunas acciones no
+                    están disponibles sin conexión.
                   </Text>
                 ) : null}
                 {route.estado === "en_curso" ? (
                   <View
                     style={[
                       styles.gpsBanner,
-                      isGpsActive ? styles.gpsBannerActive : styles.gpsBannerInactive,
+                      isGpsActive
+                        ? styles.gpsBannerActive
+                        : styles.gpsBannerInactive,
                     ]}
                   >
                     <Text
@@ -244,18 +268,41 @@ export default function TodayRouteScreen() {
                         }
                         style={styles.gpsRetry}
                       >
-                        <Text style={styles.gpsRetryText}>Activar o reintentar GPS</Text>
+                        <Text style={styles.gpsRetryText}>
+                          Activar o reintentar GPS
+                        </Text>
                       </Pressable>
                     ) : null}
                   </View>
                 ) : null}
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => router.push("/map")}
-                  style={styles.mapButton}
-                >
-                  <Text style={styles.mapButtonText}>Ver mapa de la ruta</Text>
-                </Pressable>
+                <View style={styles.viewToggle}>
+                  <View
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: true }}
+                    style={[styles.viewTab, styles.viewTabActive]}
+                  >
+                    <Text style={[styles.viewTabText, styles.viewTabTextActive]}>
+                      ☷  Lista
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="Ver mapa de la ruta"
+                    accessibilityRole="button"
+                    onPress={() => router.push("/map")}
+                    style={({ pressed }) => [
+                      styles.viewTab,
+                      pressed && styles.viewTabPressed,
+                    ]}
+                  >
+                    <Text style={styles.viewTabText}>⌖  Mapa</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.stopListHeading}>
+                  <Text style={styles.sectionHeading}>Orden de visita</Text>
+                  {stops.length > 1 ? (
+                    <Text style={styles.reorderHint}>Ordena con las flechas</Text>
+                  ) : null}
+                </View>
               </>
             ) : null}
             {pendingDeliveries.length > 0 ? (
@@ -267,7 +314,9 @@ export default function TodayRouteScreen() {
                     : "registros pendientes"}
                   {pendingPhotoCount > 0
                     ? ` · ${pendingPhotoCount} ${
-                        pendingPhotoCount === 1 ? "foto pendiente" : "fotos pendientes"
+                        pendingPhotoCount === 1
+                          ? "foto pendiente"
+                          : "fotos pendientes"
                       } de subir`
                     : " de sincronizar"}
                 </Text>
@@ -312,6 +361,14 @@ export default function TodayRouteScreen() {
               </View>
             ) : null}
           </View>
+        }
+        refreshControl={
+          <RefreshControl
+            colors={["#176447"]}
+            onRefresh={() => void loadRoute(true)}
+            refreshing={isRefreshing}
+            tintColor="#176447"
+          />
         }
         ListEmptyComponent={
           <View style={styles.emptyState}>
@@ -383,73 +440,110 @@ export default function TodayRouteScreen() {
             </View>
           </View>
         )}
-        ListFooterComponent={
-          <View style={styles.footer}>
-            {route?.estado === "asignada" ? (
-              <Pressable
-                accessibilityRole="button"
-                disabled={
-                  stops.length === 0 || route?.offlineCopy === true
-                }
-                onPress={() => void handleStartRoute()}
-                style={({ pressed }) => [
-                  styles.startButton,
-                  pressed && styles.startButtonPressed,
-                  (stops.length === 0 || route?.offlineCopy === true) &&
-                    styles.disabledButton,
-                ]}
-              >
-                <Text style={styles.startButtonText}>Iniciar ruta</Text>
-              </Pressable>
-            ) : route?.estado === "en_curso" ? (
-              <>
-                <View style={styles.startedBanner}>
-                  <Text style={styles.startedText}>Tu ruta está en curso</Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={route.offlineCopy === true}
-                  onPress={() =>
-                    router.push({
-                      pathname: "../route-summary",
-                      params: { routeId: route.id },
-                    })
-                  }
-                  style={[
-                    styles.finishButton,
-                    route.offlineCopy && styles.disabledButton,
-                  ]}
-                >
-                  <Text style={styles.finishButtonText}>Fin de ruta</Text>
-                </Pressable>
-              </>
-            ) : null}
-
+        ListFooterComponent={<View style={styles.listEndSpace} />}
+      />
+      {route ? (
+        <View style={styles.bottomAction}>
+          {route.estado === "asignada" ? (
             <Pressable
               accessibilityRole="button"
-              disabled={isSigningOut || route?.estado === "en_curso"}
-              onPress={() => void handleSignOut()}
+              disabled={stops.length === 0 || route.offlineCopy === true}
+              onPress={() => void handleStartRoute()}
               style={({ pressed }) => [
-                styles.signOutButton,
-                pressed && styles.signOutPressed,
+                styles.startButton,
+                pressed && styles.startButtonPressed,
+                (stops.length === 0 || route.offlineCopy === true) &&
+                  styles.disabledButton,
               ]}
             >
-              {isSigningOut ? (
-                <ActivityIndicator color="#176447" />
-              ) : (
-                <Text style={styles.signOutText}>Cerrar sesión</Text>
-              )}
+              <Text style={styles.startButtonText}>▷  Iniciar ruta</Text>
             </Pressable>
-          </View>
-        }
-      />
+          ) : (
+            <>
+              <View style={styles.startedBanner}>
+                <Text style={styles.startedText}>Tu ruta está en curso</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                disabled={route.offlineCopy === true}
+                onPress={() =>
+                  router.push({
+                    pathname: "../route-summary",
+                    params: { routeId: route.id },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.finishButton,
+                  pressed && styles.finishButtonPressed,
+                  route.offlineCopy && styles.disabledButton,
+                ]}
+              >
+                <Text style={styles.finishButtonText}>Fin de ruta</Text>
+              </Pressable>
+            </>
+          )}
+          <Pressable
+            accessibilityRole="button"
+            disabled={isSigningOut || route.estado === "en_curso"}
+            onPress={() => void handleSignOut()}
+            style={({ pressed }) => [
+              styles.signOutLink,
+              pressed && styles.signOutPressed,
+              (isSigningOut || route.estado === "en_curso") &&
+                styles.disabledButton,
+            ]}
+          >
+            {isSigningOut ? (
+              <ActivityIndicator color="#176447" />
+            ) : (
+              <Text style={styles.signOutText}>Cerrar sesión</Text>
+            )}
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.bottomAction}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isSigningOut}
+            onPress={() => void handleSignOut()}
+            style={[styles.signOutButton, isSigningOut && styles.disabledButton]}
+          >
+            {isSigningOut ? (
+              <ActivityIndicator color="#176447" />
+            ) : (
+              <Text style={styles.signOutText}>Cerrar sesión</Text>
+            )}
+          </Pressable>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
+function formatRouteDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  if (
+    !Number.isFinite(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return value;
+  }
+
+  const formatted = new Intl.DateTimeFormat("es-CL", {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+    weekday: "long",
+  }).format(date);
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#f5f7f5",
+    backgroundColor: "#f7f9f7",
     flex: 1,
   },
   loading: {
@@ -464,91 +558,131 @@ const styles = StyleSheet.create({
   },
   listContent: {
     flexGrow: 1,
-    gap: 12,
-    padding: 20,
-    paddingBottom: 32,
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  listEndSpace: {
+    height: 8,
   },
   stopRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 8,
+    gap: 6,
   },
   stopPressable: {
     flex: 1,
   },
   moveControls: {
-    gap: 6,
+    gap: 4,
   },
   moveButton: {
     alignItems: "center",
-    backgroundColor: "#fff0e3",
-    borderRadius: 9,
-    height: 42,
+    backgroundColor: "#eaf4ef",
+    borderRadius: 8,
+    height: 36,
     justifyContent: "center",
-    width: 42,
+    width: 34,
   },
   moveButtonPressed: {
-    backgroundColor: "#ffe0c4",
+    backgroundColor: "#dcebe2",
   },
   moveButtonText: {
-    color: "#a84f14",
-    fontSize: 20,
+    color: "#176447",
+    fontSize: 18,
     fontWeight: "700",
   },
   moveDisabledButton: {
     opacity: 0.4,
   },
   header: {
-    gap: 8,
-    marginBottom: 4,
+    gap: 10,
+    marginBottom: 2,
   },
-  eyebrow: {
-    color: "#52645a",
-    fontSize: 12,
+  topBar: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 2,
+  },
+  brand: {
+    color: "#176447",
+    fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 1,
+    letterSpacing: 0.6,
+  },
+  dateLabel: {
+    color: "#68766d",
+    fontSize: 10,
   },
   title: {
     color: "#20342a",
-    fontSize: 28,
+    fontSize: 23,
     fontWeight: "700",
+    lineHeight: 28,
+  },
+  routeSummary: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   routeBadge: {
     alignSelf: "flex-start",
     backgroundColor: "#fff0e3",
-    borderRadius: 16,
-    marginTop: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
   routeBadgeActive: {
     backgroundColor: "#e5f1ea",
   },
   routeBadgeText: {
     color: "#a84f14",
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: "700",
   },
   routeBadgeTextActive: {
     color: "#176447",
   },
-  count: {
-    color: "#52645a",
-    fontSize: 15,
-    marginTop: 2,
+  offlineTag: {
+    color: "#8c4a1b",
+    fontSize: 10,
+  },
+  stats: {
+    backgroundColor: "#176447",
+    borderRadius: 11,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  stat: {
+    alignItems: "center",
+    flex: 1,
+    gap: 2,
+  },
+  statValue: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  statLabel: {
+    color: "#d8e9df",
+    fontSize: 9,
   },
   offlineNotice: {
     backgroundColor: "#fff0e3",
     borderRadius: 9,
     color: "#8c4a1b",
-    fontSize: 14,
-    lineHeight: 20,
-    padding: 12,
+    fontSize: 11,
+    lineHeight: 16,
+    padding: 9,
   },
   gpsBanner: {
-    borderRadius: 9,
-    gap: 7,
-    padding: 12,
+    borderRadius: 10,
+    gap: 6,
+    padding: 10,
   },
   gpsBannerActive: {
     backgroundColor: "#eaf2ed",
@@ -558,7 +692,7 @@ const styles = StyleSheet.create({
   },
   gpsText: {
     color: "#8c4a1b",
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "700",
   },
   gpsTextActive: {
@@ -566,8 +700,8 @@ const styles = StyleSheet.create({
   },
   gpsError: {
     color: "#a3352c",
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 11,
+    lineHeight: 16,
   },
   gpsRetry: {
     alignSelf: "flex-start",
@@ -575,8 +709,51 @@ const styles = StyleSheet.create({
   },
   gpsRetryText: {
     color: "#176447",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  viewToggle: {
+    backgroundColor: "#e9eeea",
+    borderRadius: 9,
+    flexDirection: "row",
+    gap: 4,
+    padding: 3,
+  },
+  viewTab: {
+    alignItems: "center",
+    borderRadius: 7,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 32,
+  },
+  viewTabActive: {
+    backgroundColor: "#ffffff",
+  },
+  viewTabPressed: {
+    backgroundColor: "#dfe8e2",
+  },
+  viewTabText: {
+    color: "#65746a",
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  viewTabTextActive: {
+    color: "#176447",
+  },
+  stopListHeading: {
+    alignItems: "baseline",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 2,
+  },
+  sectionHeading: {
+    color: "#263c31",
     fontSize: 13,
     fontWeight: "700",
+  },
+  reorderHint: {
+    color: "#176447",
+    fontSize: 9,
   },
   pendingBanner: {
     backgroundColor: "#fff7ef",
@@ -584,17 +761,17 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     gap: 8,
-    padding: 12,
+    padding: 10,
   },
   pendingText: {
     color: "#8c4a1b",
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: "700",
   },
   pendingError: {
     color: "#a3352c",
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 11,
+    lineHeight: 16,
   },
   pendingRetry: {
     alignSelf: "flex-start",
@@ -602,21 +779,7 @@ const styles = StyleSheet.create({
   },
   pendingRetryText: {
     color: "#176447",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  mapButton: {
-    alignSelf: "flex-start",
-    borderColor: "#bd641f",
-    borderRadius: 9,
-    borderWidth: 1,
-    marginTop: 4,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  mapButtonText: {
-    color: "#a84f14",
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: "700",
   },
   errorBox: {
@@ -646,7 +809,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     gap: 8,
-    padding: 24,
+    padding: 18,
   },
   emptyTitle: {
     color: "#20342a",
@@ -659,16 +822,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
-  footer: {
-    gap: 12,
-    marginTop: 4,
+  bottomAction: {
+    backgroundColor: "#f7f9f7",
+    borderTopColor: "#e6ebe7",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingTop: 9,
   },
   startButton: {
     alignItems: "center",
     backgroundColor: "#176447",
-    borderRadius: 10,
+    borderRadius: 8,
     justifyContent: "center",
-    minHeight: 56,
+    minHeight: 42,
   },
   startButtonPressed: {
     backgroundColor: "#104b35",
@@ -678,34 +845,37 @@ const styles = StyleSheet.create({
   },
   startButtonText: {
     color: "#ffffff",
-    fontSize: 17,
+    fontSize: 12,
     fontWeight: "700",
   },
   startedBanner: {
     alignItems: "center",
     backgroundColor: "#e5f1ea",
-    borderRadius: 10,
+    borderRadius: 8,
     justifyContent: "center",
-    minHeight: 52,
+    minHeight: 36,
   },
   startedText: {
     color: "#176447",
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: "700",
   },
   finishButton: {
     alignItems: "center",
     backgroundColor: "#fff0e3",
     borderColor: "#f0d7c0",
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: 16,
+    minHeight: 38,
+    paddingHorizontal: 12,
+  },
+  finishButtonPressed: {
+    backgroundColor: "#ffe5d1",
   },
   finishButtonText: {
     color: "#a84f14",
-    fontSize: 15,
+    fontSize: 11,
     fontWeight: "700",
   },
   signOutButton: {
@@ -719,9 +889,13 @@ const styles = StyleSheet.create({
   signOutPressed: {
     backgroundColor: "#e5f1ea",
   },
+  signOutLink: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 26,
+  },
   signOutText: {
     color: "#176447",
-    fontSize: 16,
-    fontWeight: "700",
+    fontSize: 10,
   },
 });

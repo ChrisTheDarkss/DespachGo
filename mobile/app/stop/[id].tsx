@@ -314,7 +314,12 @@ export default function StopDetailsScreen() {
           <>
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.push("./delivery")}
+              onPress={() =>
+                router.push({
+                  pathname: "/delivery/[stopId]",
+                  params: { stopId: stop.id },
+                })
+              }
               style={({ pressed }) => [
                 styles.deliveryButton,
                 pressed && styles.callButtonPressed,
@@ -324,7 +329,12 @@ export default function StopDetailsScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.push("./failed")}
+              onPress={() =>
+                router.push({
+                  pathname: "/delivery/failed/[stopId]",
+                  params: { stopId: stop.id },
+                })
+              }
               style={({ pressed }) => [
                 styles.failedButton,
                 pressed && styles.mapButtonPressed,
