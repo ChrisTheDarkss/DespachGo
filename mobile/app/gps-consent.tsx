@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { RouteProductsSummary } from "@/src/components/RouteProductsSummary";
 import { useAuth } from "@/src/hooks/useAuth";
 import {
   getTodaysDriverRoute,
@@ -270,6 +271,10 @@ export default function GpsConsentScreen() {
               En navegador, la ubicación solo se actualiza mientras esta
               pestaña permanezca abierta.
             </Text>
+          ) : null}
+
+          {!shouldResume && isRouteValid && userId ? (
+            <RouteProductsSummary conductorId={userId} />
           ) : null}
 
           {error ? (
