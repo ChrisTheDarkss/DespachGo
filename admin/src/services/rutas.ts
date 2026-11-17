@@ -34,11 +34,14 @@ export async function asignarRuta(
   if (error) throw new Error(error.message)
 }
 
+// rutas tiene DOS claves hacia perfiles (conductor_id y creado_por): hay que indicar cuál
+// usar al incrustar el nombre, con «perfiles!conductor_id». Sin eso PostgREST responde
+// «more than one relationship was found for 'rutas' and 'perfiles'».
 export async function listarRutasDelDia(fecha: string): Promise<Ruta[]> {
   const { data, error } = await supabase
     .from('rutas')
     .select(
-      '*, perfiles(nombre), paradas(id, posicion_sugerida, posicion_final, estado, parada_ordenes(ordenes(numero_guia, cliente_nombre, direccion)))',
+      '*, perfiles!conductor_id(nombre), paradas(id, posicion_sugerida, posicion_final, estado, parada_ordenes(ordenes(numero_guia, cliente_nombre, direccion)))',
     )
     .eq('fecha', fecha)
     .order('creado_en', { ascending: true })

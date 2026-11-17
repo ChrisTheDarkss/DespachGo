@@ -3,7 +3,7 @@
 Aplicación web para que el administrador cree órdenes, arme rutas y supervise el día. Está hecha con React, Vite, TypeScript y Leaflet, y se despliega en Vercel. Los datos viven en Supabase.
 
 **Responsable:** Persona 4. Respaldo: Persona 1.
-**Última actualización de este documento:** 11-11-2026 (se agregaron validaciones, confirmaciones y avisos).
+**Última actualización de este documento:** 17-11-2026 (fotos de entrega, pendientes completos, orden con saldo, mapa en vivo y guía del admin).
 
 ---
 
@@ -68,7 +68,7 @@ admin/
 │   │   ├── Ordenes.tsx         Lista, filtros, búsqueda por guía y reprogramar atrasadas
 │   │   ├── OrdenForm.tsx       Crear y editar orden con mapa y fecha de entrega
 │   │   ├── ArmarRuta.tsx       Elegir órdenes, agrupar, optimizar, asignar
-│   │   ├── ResumenDia.tsx      Rutas y paradas del día (fotos y mapa en vivo: pendiente)
+│   │   ├── ResumenDia.tsx      Rutas y paradas del día, con la foto de cada entrega y el mapa en vivo
 │   │   └── Pendientes.tsx      Fallidas, parciales y atrasadas: reprogramar o cancelar
 │   ├── components/
 │   │   ├── Layout.tsx          Barra lateral y protección de rutas (solo admin)
@@ -79,18 +79,22 @@ admin/
 │   │   ├── SelectorProductos.tsx  Productos siempre desde el catálogo
 │   │   ├── ConfirmDialog.tsx   Confirmación antes de una acción importante
 │   │   ├── MotivoDialog.tsx    Diálogo que exige un motivo válido (cancelaciones)
-│   │   └── FechaDialog.tsx     Diálogo para elegir una nueva fecha (reprogramar)
+│   │   ├── FechaDialog.tsx     Diálogo para elegir una nueva fecha (reprogramar)
+│   │   ├── VisorFoto.tsx       Foto de la entrega ampliada (Esc para cerrar, ← → entre fotos)
+│   │   ├── SaldoDialog.tsx     Saldo de una entrega parcial y creación de la orden nueva
+│   │   └── ConductoresEnVivo.tsx  Mapa con la última posición de cada conductor (Realtime)
 │   ├── hooks/
 │   │   ├── useAuth.tsx         Sesión, perfil y rol
 │   │   └── useAviso.tsx        Avisos flotantes de éxito, error e información
 │   ├── lib/                    supabase.ts, leaflet.ts, telefono.ts, fechas.ts, validaciones.ts
-│   ├── services/               ordenes, rutas, productos, geocodificacion, optimizacion
+│   ├── services/               ordenes, rutas, fotos, saldos, ubicaciones, productos, geocodificacion, optimizacion
 │   ├── types/index.ts          Tipos y estados (alineados con el esquema de Supabase)
 │   ├── App.tsx, main.tsx, index.css
 ├── index.html
 ├── vite.config.ts
 ├── vercel.json
 ├── .env.example
+├── GUIA_ADMIN.md               Guía de una página para el administrador
 └── package.json
 ```
 
@@ -110,9 +114,9 @@ Tecnologías: React 18, Vite 5, TypeScript, React Router 6, react-leaflet 4 (map
 
 **Armar ruta.** Se elige fecha de la ruta (no anterior a hoy) y conductor (solo activos). La lista muestra las órdenes pendientes ordenadas por fecha de entrega, con las atrasadas marcadas; las programadas para después de la fecha de la ruta quedan ocultas salvo que se active «Mostrar también las programadas». Las órdenes seleccionadas forman el orden de visita, que se ajusta con las flechas ↑↓. La casilla **Agrupar** junta las órdenes del mismo teléfono y dirección en una sola parada y muestra una vista previa de cuántas paradas resultan. **Optimizar** (mínimo 3 órdenes) pide el orden sugerido a una Edge Function; **Asignar** valida, abre un diálogo de confirmación con el resumen (avisa si hay órdenes con fecha posterior a la de la ruta) y recién entonces crea la ruta.
 
-**Resumen del día.** Rutas de la fecha elegida, con conductor, estado de la ruta y tabla de paradas (posición, guías, cliente, dirección y estado).
+**Resumen del día.** Rutas de la fecha elegida, con conductor, estado de la ruta y tabla de paradas (posición, guías, cliente, dirección, estado y **foto de la entrega**). La foto aparece como miniatura; al hacer clic se abre ampliada. Si la parada agrupa varias guías con foto, se muestran todas y se puede pasar de una a otra. En la fecha de hoy, arriba aparece **Conductores en vivo**: mapa con la última posición de cada conductor, que se mueve sola (Supabase Realtime); en gris si lleva más de 10 minutos sin actualizar. Las fotos se piden aparte de la tabla: si fallan, la tabla igual se ve y arriba aparece el motivo del error. Los enlaces a las fotos son temporales (1 hora): si la página lleva mucho rato abierta, hay que recargarla.
 
-**Pendientes de resolver.** Reúne las órdenes fallidas, las de entrega parcial y las **pendientes con fecha de entrega vencida** (las atrasadas primero). Para fallidas y atrasadas: **Reprogramar** (elige nueva fecha, la orden queda pendiente) o **Cancelar** (con motivo). Las parciales solo se ven por ahora.
+**Pendientes de resolver.** Reúne las órdenes fallidas, las **omitidas** (de paradas en estado `omitida`, sin resolver y con fecha de hoy o anterior), las de entrega parcial y las **pendientes con fecha de entrega vencida** (las atrasadas primero). Para fallidas, omitidas y atrasadas: **Reprogramar** (elige nueva fecha, la orden queda pendiente) o **Cancelar** (con motivo). Para las parciales: **Crear orden con saldo**, que calcula lo no entregado (pedido − entregado) y crea una orden nueva con guía `ORIGINAL-S1` (o `-S2`…), mismos datos del cliente y la fecha elegida; la parcial original sale de la lista cuando existe su saldo.
 
 ---
 
@@ -128,6 +132,7 @@ Las tablas y funciones vienen de las migraciones de `supabase/migrations/`: `001
 - `perfiles`: `id`, `nombre`, `rol`, `activo`.
 - `rutas`: `fecha`, `estado`, `conductor_id`, `creado_en`.
 - `paradas`: `posicion_sugerida`, `posicion_final` (el panel muestra y ordena por `posicion_final`, o la sugerida si falta).
+- `entregas` y `entrega_fotos`: solo lectura, para mostrar la foto de cada entrega en el Resumen del día (ver sección 10).
 - `parada_ordenes`: relaciona paradas con órdenes.
 
 ### Estados
@@ -217,6 +222,8 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 | **4. Reagendar atrasadas** | Pendientes ahora incluye las órdenes pendientes con fecha vencida, con **Reprogramar** y **Cancelar**; Órdenes muestra **Reprogramar** para fallidas y atrasadas. |
 | **5. Estilo** | Se añadió un fondo animado (columnas que flotan sobre un degradado). Pasó de azul oscuro tipo pantalla de inicio de PS2 a la paleta actual **verde, blanco y naranjo**: botones verdes, barra lateral verde oscura con la sección activa en naranjo, tarjetas blancas, pines y números de parada naranjos. Las etiquetas de estado se leen con espacio («en ruta», «entregada parcial»). Con «reducir movimiento» activado en el sistema, el fondo queda quieto. Los colores se cambian al inicio de `src/index.css` (`--primario`, `--acento`, `--acento-oscuro`). |
 | **6. Validaciones y avisos** | Se centralizaron las reglas en `lib/validaciones.ts` (con 28 casos de prueba verificados), se agregaron errores por campo en el formulario de orden, el diálogo `ConfirmDialog` (asignar ruta y cerrar sesión), un motivo válido en las cancelaciones, el mínimo de fecha en Armar ruta y avisos flotantes de éxito y error en cada acción. |
+| **7. Fotos en el Resumen del día** | Nuevo `services/fotos.ts` (busca la foto de cada entrega y pide enlaces temporales a Storage) y `components/VisorFoto.tsx` (foto ampliada). `ResumenDia.tsx` agrega la columna «Foto de la entrega». Cierra la tarea 4-17 en lo que toca al resumen del día. |
+| **8. Pendientes, saldo y mapa en vivo** | `Pendientes` incluye las paradas omitidas (4-18). Nueva orden con saldo para entregas parciales: `services/saldos.ts` y `SaldoDialog.tsx` (4-19). Mapa en vivo en el Resumen con Realtime: `services/ubicaciones.ts` y `ConductoresEnVivo.tsx` (4-20). Se agregan `GUIA_ADMIN.md` (4-22), la lista de pruebas (sección 13) y `.env.example`. Las fotos y miniaturas se hicieron más pequeñas. |
 
 ### Estado de las tareas del plan
 
@@ -231,11 +238,13 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 | 4-13 y 4-14 Optimizar y ajustar el orden | Listo en el panel; depende de la Edge Function `optimizar_ruta` |
 | 4-15 Agrupar órdenes del mismo cliente | Listo (casilla en Armar ruta; la regla la aplica `asignar_ruta`) |
 | 4-16 Resumen del día | Versión base (rutas, paradas y estados) |
-| 4-17 Fotos de las guías | **Pendiente** |
-| 4-18 Pendientes de resolver | Fallidas, atrasadas: reprogramar y cancelar. Parciales: solo vista |
-| 4-19 Orden con saldo | **Pendiente** |
-| 4-20 Mapa en vivo de conductores | **Pendiente** |
-| 4-21 a 4-23 Correcciones, guía del admin y publicación final | **Pendiente** |
+| 4-17 Fotos de las guías | Hecho en el Resumen del día. **Falta verificar contra Supabase real** (ver sección 10) |
+| 4-18 Pendientes de resolver | Hecho: fallidas, omitidas, atrasadas (reprogramar/cancelar) y parciales (orden con saldo). **Falta probar con datos reales** |
+| 4-19 Orden con saldo | Hecho. **Falta verificar `entrega_items`** (ver sección 10) |
+| 4-20 Mapa en vivo de conductores | Hecho. **Requiere activar Realtime** en la tabla (sección 10) |
+| 4-21 Pruebas y correcciones | **Pendiente de ejecutar**: lista en la sección 13 |
+| 4-22 Guía del admin | Hecha (`GUIA_ADMIN.md`) |
+| 4-23 Publicación final | **Pendiente de confirmar** (pasos en la sección 13) |
 
 ---
 
@@ -243,7 +252,10 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 
 - **Fechas de entrega vacías.** El panel supone que `fecha_entrega` nunca es nula. Comprobar en Supabase: `select count(*) from ordenes where fecha_entrega is null;`. Si da más de 0 (órdenes anteriores a la columna), hay que rellenarlas o hacer el panel tolerante.
 - **Entregas parciales.** Hoy solo se ven en Pendientes; su gestión depende de la tarea 4-19.
-- **Cosas sin construir:** fotos de guías con enlaces temporales (4-17), orden con saldo (4-19) y mapa en vivo con Realtime (4-20).
+- **Fotos de entrega (verificar).** Las fotos están en la tabla `entrega_fotos` (varias por entrega) y los archivos en un bucket privado. `services/fotos.ts` lee `entregas → entrega_fotos`, detecta la columna con la ruta del archivo (`COLUMNAS_ARCHIVO`) y prueba los buckets de `BUCKETS_FOTOS` hasta poder firmar el enlace. Se escribió sin ver la migración 002: si los nombres difieren, el Resumen muestra el error con las columnas reales y basta ajustar esas dos listas. El admin debe poder leer el bucket (política de Storage) para generar los enlaces.
+- **Orden con saldo (verificar).** `services/saldos.ts` lee `parada_ordenes → paradas → entregas → entrega_items`. Detecta si `entrega_items` se enlaza por `orden_item_id` o `producto_id` y busca la columna de cantidad en `COLUMNAS_CANTIDAD`. Si no coincide, el diálogo muestra las columnas reales. La orden original parcial no cambia de estado: se oculta de Pendientes cuando existe una orden activa con guía `ORIGINAL-S…`. Copia la ubicación de la original (debe tenerla).
+- **Mapa en vivo (verificar).** Hay que activar Realtime en la tabla, una vez: `alter publication supabase_realtime add table ubicaciones_conductor;` (como migración), y el admin debe poder leerla por RLS. `services/ubicaciones.ts` supone `conductor_id`, `latitud`/`longitud` y una columna de hora (`COLUMNAS_HORA`); si no coinciden, el panel muestra el error.
+- **Omitidas.** Se buscan en `paradas.estado = 'omitida'`. Una orden reprogramada para hoy mismo podría seguir apareciendo mientras no se vuelva a asignar y entregar.
 - **Pruebas.** No hay pruebas automáticas. Lo revisado hasta ahora es que el proyecto compila (`tsc`) y genera el build de producción, que los parámetros coinciden con el código de las funciones SQL, que las reglas de validación pasan 28 casos de prueba y una revisión visual del estilo. **No se probó de punta a punta contra una base Supabase real.**
 - **Tamaño del paquete.** El build avisa que el archivo principal supera los 500 kB; se puede dividir con importaciones dinámicas si importa el tiempo de carga.
 - **Datos de demostración.** `seed.sql` usa clientes, teléfonos y productos ficticios, con direcciones y coordenadas aproximadas: sirve para probar pantallas, no para validar la geocodificación.
@@ -270,6 +282,8 @@ Las etapas son las del registro de la sección 9. «Nuevo» indica que el archiv
 | `types/index.ts` | Tipos y estados. | Etapa 2: nombres y estados del esquema real. Etapa 3: `fecha_entrega`. |
 | `services/ordenes.ts` | Consultas y acciones sobre órdenes. | Etapa 2: nombres de columnas. Etapa 3: `guardar_orden`, `reprogramar_orden` y filtro por fecha de entrega. Etapa 4: filtro `entregaAntesDe`. |
 | `services/rutas.ts` | Conductores, asignar ruta y rutas del día. | Etapa 2: parámetros de `asignar_ruta`, `posicion_final` y conductores activos. Etapa 3: `p_agrupar`. |
+| `services/fotos.ts` | Fotos de entrega por parada (enlaces temporales). | **Nuevo** (etapa 7). |
+| `components/VisorFoto.tsx` | Foto de la entrega ampliada. | **Nuevo** (etapa 7). |
 | `services/productos.ts`, `geocodificacion.ts`, `optimizacion.ts` | Catálogo, geocodificación y optimización de ruta. | — |
 | `components/Layout.tsx` | Barra lateral y protección de rutas. | Etapa 6: confirmación al cerrar sesión. |
 | `components/Fondo.tsx` | Fondo animado decorativo. | **Nuevo** (etapa 5). |
@@ -283,7 +297,7 @@ Las etapas son las del registro de la sección 9. «Nuevo» indica que el archiv
 | `pages/Ordenes.tsx` | Lista, filtros y reprogramar. | Etapa 2: nombres de columnas. Etapa 3: columna y filtro de fecha de entrega. Etapa 4: botón Reprogramar. Etapa 6: avisos. |
 | `pages/OrdenForm.tsx` | Crear y editar orden. | Etapa 2: nombres de columnas. Etapa 3: campo de fecha de entrega. Etapa 6: errores por campo y avisos. |
 | `pages/ArmarRuta.tsx` | Elegir órdenes, agrupar, optimizar y asignar. | Etapa 2: nombres de columnas. Etapa 3: agrupar, atrasadas y fecha de entrega. Etapa 6: fecha mínima, diálogo de confirmación y avisos. |
-| `pages/ResumenDia.tsx` | Rutas y paradas del día. | Etapa 2: posición de la parada. |
+| `pages/ResumenDia.tsx` | Rutas y paradas del día. | Etapa 2: posición de la parada. Etapa 7: columna de foto de la entrega y visor. |
 | `pages/Pendientes.tsx` | Fallidas, parciales y atrasadas. | Etapa 2: estado `entregada_parcial`. Etapa 3: reprogramar con fecha. Etapa 4: incluye pendientes atrasadas. Etapa 6: avisos. |
 
 Fuera de `src/`: `README.md` (resumen corto que remite a este documento), `package.json`, `vite.config.ts`, `tsconfig.json`, `vercel.json`, `index.html`, `.env.example` y `.gitignore`.
@@ -296,7 +310,20 @@ Fuera de `src/`: `README.md` (resumen corto que remite a este documento), `packa
 4. Si `package.json` no cambió, no hace falta volver a correr `npm install`.
 5. Detener el servidor con `Ctrl+C`, volver a correr `npm run dev` y refrescar el navegador con `Ctrl+F5`.
 
-## 13. Solución de problemas
+## 13. Pruebas de punta a punta y publicación (4-21 y 4-23)
+
+Aún **no se han ejecutado** contra Supabase real. Lista para hacerlo, con el admin y con un conductor de prueba:
+
+1. Crear una orden con productos, fecha de hoy y pin validado. Probar guía repetida (debe avisar).
+2. Armar una ruta con 4 órdenes (dos del mismo cliente y dirección, con **Agrupar**) y asignarla.
+3. Desde la app del conductor: iniciar la ruta, entregar una, entregar otra **parcialmente** con foto, marcar una fallida y dejar una omitida.
+4. Resumen del día: ver los estados, la **miniatura y la foto ampliada**, y el mapa **en vivo** moviéndose.
+5. Pendientes: reprogramar la fallida y la omitida, cancelar una con motivo y crear la **orden con saldo** de la parcial; comprobar que la parcial sale de la lista y que la `-S1` aparece en Órdenes con los productos correctos.
+6. Con un usuario conductor, confirmar que **no** puede entrar al panel y que solo ve su ruta (RLS).
+
+**Publicación en Vercel:** importar el repositorio, Root Directory `admin`, variables `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`, desplegar y repetir los pasos 1 y 4 en la URL pública. Confirmar que al recargar `/resumen` no da 404 (lo cubre `vercel.json`).
+
+## 14. Solución de problemas
 
 | Síntoma | Causa probable | Qué hacer |
 | --- | --- | --- |

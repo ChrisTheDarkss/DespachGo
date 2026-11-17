@@ -94,3 +94,27 @@ export async function reprogramarOrden(id: string, fechaEntrega: string): Promis
   })
   if (error) throw new Error(error.message)
 }
+
+/**
+ * Órdenes que quedaron en paradas «omitidas» (el conductor no llegó a visitarlas).
+ * Solo se devuelven las que siguen sin resolver (pendientes o fallidas) y cuya fecha
+ * de entrega no es futura; así no reaparecen las ya reprogramadas hacia adelante.
+ */
+export async function listarOmitidas(hoy: string): Promise<Orden[]> {
+  const { data, error } = await supabase
+    .from('paradas')
+    .select('id, parada_ordenes(ordenes(*, orden_items(producto_id, cantidad_pedida, productos(nombre))))')
+    .eq('estado', 'omitida')
+  if (error) throw new Error(error.message)
+
+  const vistas = new Map<string, Orden>()
+  for (const p of (data ?? []) as unknown as { parada_ordenes: { ordenes: Orden | null }[] | null }[]) {
+    for (const po of p.parada_ordenes ?? []) {
+      const o = po.ordenes
+      if (!o) continue
+      const sinResolver = o.estado === 'pendiente' || o.estado === 'fallida'
+      if (sinResolver && o.fecha_entrega <= hoy) vistas.set(o.id, o)
+    }
+  }
+  return [...vistas.values()]
+}
