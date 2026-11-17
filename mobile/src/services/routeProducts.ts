@@ -1,8 +1,13 @@
 import { getTodaysDriverRoute } from "@/src/services/driverRoute";
 import { supabase, supabaseConfigurationError } from "@/src/lib/supabase";
-import type { RouteProductTotal } from "@/src/types/routeProducts";
+import type {
+  RouteProductTotal,
+  RouteProductsSummary,
+  RouteStopProducts,
+} from "@/src/types/routeProducts";
 
 type RouteOrderItemRow = {
+  orden_id: string;
   producto_id: string;
   cantidad_pedida: number;
 };
@@ -13,27 +18,67 @@ type RouteProductRow = {
   unidad: string;
 };
 
+function addProductQuantity(
+  totals: Map<string, RouteProductTotal>,
+  product: RouteProductRow,
+  quantity: number,
+) {
+  const total = totals.get(product.id);
+  if (total) {
+    total.cantidad_total += quantity;
+  } else {
+    totals.set(product.id, {
+      producto_id: product.id,
+      nombre: product.nombre,
+      unidad: product.unidad,
+      cantidad_total: quantity,
+    });
+  }
+}
+
 function throwIfError(error: { message: string } | null) {
   if (error) {
     throw new Error(error.message);
   }
 }
 
-export async function getTodaysRouteProductTotals(
+export async function getTodaysRouteProductsSummary(
   conductorId: string,
-): Promise<RouteProductTotal[]> {
+): Promise<RouteProductsSummary> {
   const route = await getTodaysDriverRoute(conductorId);
   if (!route) {
-    return [];
+    return { paradas: [], total_general: [] };
   }
 
-  const orderIds = [
-    ...new Set(
-      route.paradas.flatMap((stop) => stop.ordenes.map((order) => order.id)),
-    ),
-  ];
+  const productsByStop: RouteStopProducts[] = route.paradas.map((stop) => {
+    const orders = stop.ordenes;
+    const clientes = [...new Set(orders.map((order) => order.cliente))];
+    const direcciones = [
+      ...new Set(
+        orders.map((order) => `${order.direccion}, ${order.comuna}`),
+      ),
+    ];
+
+    return {
+      parada_id: stop.id,
+      posicion: stop.posicion,
+      cliente: clientes.join(" · ") || "Cliente no disponible",
+      direccion: direcciones.join(" · ") || "Dirección no disponible",
+      guias: [...new Set(orders.map((order) => order.numero_guia))],
+      productos: [],
+    };
+  });
+  const stopIdByOrderId = new Map<string, string>();
+
+  for (const stop of route.paradas) {
+    for (const order of stop.ordenes) {
+      stopIdByOrderId.set(order.id, stop.id);
+    }
+  }
+
+  const orderIds = [...stopIdByOrderId.keys()];
   if (orderIds.length === 0) {
-    return [];
+    return { paradas: productsByStop, total_general: [] };
   }
 
   if (!supabase) {
@@ -44,14 +89,14 @@ export async function getTodaysRouteProductTotals(
 
   const { data: itemRows, error: itemsError } = await supabase
     .from("orden_items")
-    .select("producto_id, cantidad_pedida")
+    .select("orden_id, producto_id, cantidad_pedida")
     .in("orden_id", orderIds);
 
   throwIfError(itemsError);
   const items = (itemRows ?? []) as RouteOrderItemRow[];
   const productIds = [...new Set(items.map(({ producto_id }) => producto_id))];
   if (productIds.length === 0) {
-    return [];
+    return { paradas: productsByStop, total_general: [] };
   }
 
   const { data: productRows, error: productsError } = await supabase
@@ -64,7 +109,10 @@ export async function getTodaysRouteProductTotals(
   const productById = new Map(
     products.map((product) => [product.id, product]),
   );
-  const totalsByProduct = new Map<string, RouteProductTotal>();
+  const totalsByStop = new Map<string, Map<string, RouteProductTotal>>(
+    productsByStop.map(({ parada_id }) => [parada_id, new Map()]),
+  );
+  const totalGeneral = new Map<string, RouteProductTotal>();
 
   for (const item of items) {
     const product = productById.get(item.producto_id);
@@ -75,18 +123,31 @@ export async function getTodaysRouteProductTotals(
       throw new Error("La ruta contiene una cantidad de producto inválida.");
     }
 
-    const total = totalsByProduct.get(item.producto_id);
-    if (total) {
-      total.cantidad_total += item.cantidad_pedida;
-    } else {
-      totalsByProduct.set(item.producto_id, {
-        producto_id: item.producto_id,
-        nombre: product.nombre,
-        unidad: product.unidad,
-        cantidad_total: item.cantidad_pedida,
-      });
+    const stopId = stopIdByOrderId.get(item.orden_id);
+    if (!stopId) {
+      throw new Error("No se pudo asociar un producto con su parada.");
     }
+    const stopTotals = totalsByStop.get(stopId);
+    if (!stopTotals) {
+      throw new Error("No se encontró la parada asociada a un producto.");
+    }
+
+    addProductQuantity(stopTotals, product, item.cantidad_pedida);
+    addProductQuantity(totalGeneral, product, item.cantidad_pedida);
   }
 
-  return [...totalsByProduct.values()];
+  return {
+    paradas: productsByStop.map((stop) => ({
+      ...stop,
+      productos: [...(totalsByStop.get(stop.parada_id)?.values() ?? [])],
+    })),
+    total_general: [...totalGeneral.values()],
+  };
+}
+
+export async function getTodaysRouteProductTotals(
+  conductorId: string,
+): Promise<RouteProductTotal[]> {
+  const summary = await getTodaysRouteProductsSummary(conductorId);
+  return summary.total_general;
 }
