@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { RouteProductsSummary } from "@/src/components/RouteProductsSummary";
 import { StopCard } from "@/src/components/StopCard";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useDeliveryOutbox } from "@/src/hooks/useDeliveryOutbox";
@@ -34,6 +35,9 @@ export default function TodayRouteScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isReordering, setIsReordering] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [selectedRouteView, setSelectedRouteView] = useState<
+    "lista" | "carga"
+  >("lista");
   const [error, setError] = useState<string | null>(null);
   const { state: gpsState, error: gpsError } = useGpsTracking(
     conductorId,
@@ -175,7 +179,7 @@ export default function TodayRouteScreen() {
     <SafeAreaView style={styles.safeArea}>
       <FlatList
         contentContainerStyle={styles.listContent}
-        data={stops}
+        data={selectedRouteView === "lista" ? stops : []}
         keyExtractor={(stop) => stop.id}
         ListHeaderComponent={
           <View style={styles.header}>
@@ -276,15 +280,50 @@ export default function TodayRouteScreen() {
                   </View>
                 ) : null}
                 <View style={styles.viewToggle}>
-                  <View
+                  <Pressable
                     accessibilityRole="tab"
-                    accessibilityState={{ selected: true }}
-                    style={[styles.viewTab, styles.viewTabActive]}
+                    accessibilityState={{
+                      selected: selectedRouteView === "lista",
+                    }}
+                    onPress={() => setSelectedRouteView("lista")}
+                    style={({ pressed }) => [
+                      styles.viewTab,
+                      selectedRouteView === "lista" && styles.viewTabActive,
+                      pressed && styles.viewTabPressed,
+                    ]}
                   >
-                    <Text style={[styles.viewTabText, styles.viewTabTextActive]}>
+                    <Text
+                      style={[
+                        styles.viewTabText,
+                        selectedRouteView === "lista" &&
+                          styles.viewTabTextActive,
+                      ]}
+                    >
                       ☷  Lista
                     </Text>
-                  </View>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="tab"
+                    accessibilityState={{
+                      selected: selectedRouteView === "carga",
+                    }}
+                    onPress={() => setSelectedRouteView("carga")}
+                    style={({ pressed }) => [
+                      styles.viewTab,
+                      selectedRouteView === "carga" && styles.viewTabActive,
+                      pressed && styles.viewTabPressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.viewTabText,
+                        selectedRouteView === "carga" &&
+                          styles.viewTabTextActive,
+                      ]}
+                    >
+                      Carga
+                    </Text>
+                  </Pressable>
                   <Pressable
                     accessibilityLabel="Ver mapa de la ruta"
                     accessibilityRole="button"
@@ -297,15 +336,22 @@ export default function TodayRouteScreen() {
                     <Text style={styles.viewTabText}>⌖  Mapa</Text>
                   </Pressable>
                 </View>
-                <View style={styles.stopListHeading}>
-                  <Text style={styles.sectionHeading}>Orden de visita</Text>
-                  {stops.length > 1 ? (
-                    <Text style={styles.reorderHint}>Ordena con las flechas</Text>
-                  ) : null}
-                </View>
+                {selectedRouteView === "lista" ? (
+                  <View style={styles.stopListHeading}>
+                    <Text style={styles.sectionHeading}>Orden de visita</Text>
+                    {stops.length > 1 ? (
+                      <Text style={styles.reorderHint}>
+                        Ordena con las flechas
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <RouteProductsSummary conductorId={conductorId} />
+                )}
               </>
             ) : null}
-            {pendingDeliveries.length > 0 ? (
+            {selectedRouteView === "lista" &&
+            pendingDeliveries.length > 0 ? (
               <View style={styles.pendingBanner}>
                 <Text style={styles.pendingText}>
                   {pendingDeliveries.length}{" "}
@@ -341,12 +387,12 @@ export default function TodayRouteScreen() {
                 </Pressable>
               </View>
             ) : null}
-            {outboxError ? (
+            {selectedRouteView === "lista" && outboxError ? (
               <Text accessibilityRole="alert" style={styles.pendingError}>
                 {outboxError}
               </Text>
             ) : null}
-            {error ? (
+            {selectedRouteView === "lista" && error ? (
               <View style={styles.errorBox}>
                 <Text accessibilityRole="alert" style={styles.error}>
                   {error}
@@ -371,16 +417,18 @@ export default function TodayRouteScreen() {
           />
         }
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>
-              {route
-                ? "Esta ruta todavía no tiene paradas."
-                : "No tienes una ruta asignada para hoy."}
-            </Text>
-            <Text style={styles.emptyText}>
-              Desliza hacia abajo para actualizar.
-            </Text>
-          </View>
+          selectedRouteView === "lista" ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>
+                {route
+                  ? "Esta ruta todavía no tiene paradas."
+                  : "No tienes una ruta asignada para hoy."}
+              </Text>
+              <Text style={styles.emptyText}>
+                Desliza hacia abajo para actualizar.
+              </Text>
+            </View>
+          ) : undefined
         }
         renderItem={({ item, index }) => (
           <View style={styles.stopRow}>
@@ -440,7 +488,11 @@ export default function TodayRouteScreen() {
             </View>
           </View>
         )}
-        ListFooterComponent={<View style={styles.listEndSpace} />}
+        ListFooterComponent={
+          selectedRouteView === "lista" ? (
+            <View style={styles.listEndSpace} />
+          ) : undefined
+        }
       />
       {route ? (
         <View style={styles.bottomAction}>
