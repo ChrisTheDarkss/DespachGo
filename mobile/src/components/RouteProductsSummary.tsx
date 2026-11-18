@@ -6,8 +6,8 @@ import {
   Text,
   View,
 } from "react-native";
-import { getTodaysRouteProductsSummary } from "@/src/services/routeProducts";
-import type { RouteProductsSummary as RouteProductsSummaryData } from "@/src/types/routeProducts";
+import { getTodaysRouteProductTotals } from "@/src/services/routeProducts";
+import type { RouteProductTotal } from "@/src/types/routeProducts";
 
 type RouteProductsSummaryProps = {
   conductorId: string | undefined;
@@ -20,7 +20,7 @@ const quantityFormatter = new Intl.NumberFormat("es-CL", {
 export function RouteProductsSummary({
   conductorId,
 }: RouteProductsSummaryProps) {
-  const [summary, setSummary] = useState<RouteProductsSummaryData | null>(null);
+  const [products, setProducts] = useState<RouteProductTotal[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -28,7 +28,7 @@ export function RouteProductsSummary({
   useEffect(() => {
     let active = true;
 
-    async function loadSummary() {
+    async function loadProducts() {
       setIsLoading(true);
       setError(null);
       if (!conductorId) {
@@ -38,9 +38,9 @@ export function RouteProductsSummary({
       }
 
       try {
-        const routeSummary = await getTodaysRouteProductsSummary(conductorId);
+        const totals = await getTodaysRouteProductTotals(conductorId);
         if (active) {
-          setSummary(routeSummary);
+          setProducts(totals);
         }
       } catch (loadError) {
         if (active) {
@@ -57,100 +57,64 @@ export function RouteProductsSummary({
       }
     }
 
-    void loadSummary();
+    void loadProducts();
     return () => {
       active = false;
     };
   }, [conductorId, retryCount]);
 
-  return (
-    <View style={styles.container}>
-      <Text accessibilityRole="header" style={styles.sectionTitle}>
-        Total general
-      </Text>
+  if (isLoading) {
+    return (
+      <View accessibilityLiveRegion="polite" style={styles.status}>
+        <ActivityIndicator color="#176447" size="large" />
+        <Text style={styles.statusText}>Cargando productos...</Text>
+      </View>
+    );
+  }
 
-      {isLoading ? (
-        <View accessibilityLiveRegion="polite" style={styles.status}>
-          <ActivityIndicator color="#176447" size="large" />
-          <Text style={styles.statusText}>Cargando productos...</Text>
-        </View>
-      ) : error ? (
-        <View style={styles.status}>
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setRetryCount((count) => count + 1)}
-            style={({ pressed }) => [
-              styles.retryButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Text style={styles.retryButtonText}>Reintentar</Text>
-          </Pressable>
-        </View>
-      ) : summary?.total_general.length ? (
-        <>
-          <View style={styles.productList}>
-            {summary.total_general.map((product) => (
-              <View key={product.producto_id} style={styles.productRow}>
-                <Text style={styles.productName}>{product.nombre}</Text>
-                <Text style={styles.quantity}>
-                  {quantityFormatter.format(product.cantidad_total)}{" "}
-                  {product.unidad}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          <Text accessibilityRole="header" style={styles.sectionTitle}>
-            Productos por parada
-          </Text>
-          {summary.paradas.map((stop) => (
-            <View key={stop.parada_id} style={styles.stopCard}>
-              <Text style={styles.customer}>
-                Parada {stop.posicion}: {stop.cliente}
-              </Text>
-              {stop.productos.length > 0 ? (
-                stop.productos.map((product) => (
-                  <View
-                    key={product.producto_id}
-                    style={styles.productRow}
-                  >
-                    <Text style={styles.productName}>{product.nombre}</Text>
-                    <Text style={styles.quantity}>
-                      {quantityFormatter.format(product.cantidad_total)}{" "}
-                      {product.unidad}
-                    </Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.statusText}>
-                  Sin productos registrados para esta parada.
-                </Text>
-              )}
-            </View>
-          ))}
-        </>
-      ) : (
-        <Text style={styles.statusText}>
-          No hay productos registrados para esta ruta.
+  if (error) {
+    return (
+      <View style={styles.status}>
+        <Text accessibilityRole="alert" style={styles.error}>
+          {error}
         </Text>
-      )}
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setRetryCount((count) => count + 1)}
+          style={({ pressed }) => [
+            styles.retryButton,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          <Text style={styles.retryButtonText}>Reintentar</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (!products?.length) {
+    return (
+      <Text style={styles.statusText}>
+        No hay productos registrados para esta ruta.
+      </Text>
+    );
+  }
+
+  return (
+    <View style={styles.productList}>
+      {products.map((product) => (
+        <View key={product.producto_id} style={styles.productRow}>
+          <Text style={styles.productName}>{product.nombre}</Text>
+          <Text style={styles.quantity}>
+            {quantityFormatter.format(product.cantidad_total)} {product.unidad}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    gap: 12,
-  },
-  sectionTitle: {
-    color: "#20342a",
-    fontSize: 20,
-    fontWeight: "700",
-  },
   status: {
     alignItems: "flex-start",
     gap: 12,
@@ -212,19 +176,5 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 22,
     textAlign: "right",
-  },
-  stopCard: {
-    backgroundColor: "#ffffff",
-    borderColor: "#e1e9e3",
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 8,
-    padding: 12,
-  },
-  customer: {
-    color: "#20342a",
-    fontSize: 17,
-    fontWeight: "700",
-    lineHeight: 24,
   },
 });

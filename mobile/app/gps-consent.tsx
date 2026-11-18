@@ -112,7 +112,7 @@ export default function GpsConsentScreen() {
       setRouteIsStarted(true);
     }
     await startLocationTracking(userId, routeId, consentedAt);
-    router.replace(shouldResume ? "/(tabs)" : "/route-load");
+    router.replace("/(tabs)");
   }
 
   async function handleConsent() {
