@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import { optimizarConOrs, orsDisponible } from './ors'
 
 export interface PuntoRuta {
   id: string
@@ -11,6 +12,8 @@ export interface PuntoRuta {
  * Espera: { puntos: [{id, lat, lng}] } y responde { orden: [id, id, ...] }.
  */
 export async function optimizarOrden(puntos: PuntoRuta[]): Promise<string[]> {
+  // Con clave de OpenRouteService en el .env se optimiza directo; si no, Edge Function.
+  if (orsDisponible) return optimizarConOrs(puntos)
   const { data, error } = await supabase.functions.invoke('optimizar_ruta', {
     body: { puntos },
   })

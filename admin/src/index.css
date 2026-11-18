@@ -355,13 +355,14 @@ fieldset:disabled {
 }
 
 .btn-peligro {
-  background: #fff;
+  background: var(--peligro);
   border-color: var(--peligro);
-  color: var(--peligro);
+  color: #fff;
 }
 
 .btn-peligro:hover:not(:disabled) {
-  background: #fef3f2;
+  background: #912018;
+  border-color: #912018;
 }
 
 .btn-grande {
@@ -710,113 +711,4 @@ select[aria-invalid='true'] {
   .aviso-flotante {
     animation: none;
   }
-}
-
-/* ---------- Fotos de entrega (resumen del día) ---------- */
-.miniaturas {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.miniatura {
-  padding: 0;
-  border: 2px solid var(--borde);
-  border-radius: 8px;
-  overflow: hidden;
-  background: #f0fdf4;
-  cursor: zoom-in;
-  width: 44px;
-  height: 44px;
-}
-
-.miniatura:hover,
-.miniatura:focus-visible {
-  border-color: var(--acento);
-  outline: none;
-}
-
-.miniatura img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.visor {
-  background: #fff;
-  border-radius: 12px;
-  padding: 1rem;
-  width: 100%;
-  max-width: 560px;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.visor-cabecera {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.visor-img {
-  max-width: 100%;
-  max-height: 40vh;
-  object-fit: contain;
-  align-self: center;
-  border-radius: 8px;
-  background: #f4f5f7;
-}
-
-/* ---------- Mapa en vivo de conductores ---------- */
-.pin-cond {
-  background: none;
-  border: none;
-}
-
-.pin-cond span {
-  display: inline-block;
-  transform: translate(-50%, -50%);
-  background: var(--acento);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.8rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  white-space: nowrap;
-}
-
-.pin-cond-viejo span {
-  background: #6b7280;
-}
-
-.estado-vivo {
-  font-size: 0.85rem;
-  font-weight: 700;
-}
-
-.estado-en_vivo {
-  color: var(--exito);
-}
-
-.estado-caida {
-  color: var(--peligro);
-}
-
-.estado-conectando {
-  color: var(--suave);
-}
-
-.lista-vivo {
-  list-style: none;
-  padding: 0;
-  margin: 0.75rem 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.5rem;
 }

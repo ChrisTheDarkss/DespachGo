@@ -3,64 +3,29 @@ import { Link } from 'react-router-dom'
 import EstadoBadge from '../components/EstadoBadge'
 import FechaDialog from '../components/FechaDialog'
 import MotivoDialog from '../components/MotivoDialog'
-import SaldoDialog from '../components/SaldoDialog'
 import { useAviso } from '../hooks/useAviso'
 import { formatearFecha, hoyLocal } from '../lib/fechas'
-import { cancelarOrden, listarOmitidas, listarOrdenes, reprogramarOrden } from '../services/ordenes'
-import { crearOrdenSaldo, guiaDeSaldo } from '../services/saldos'
-import type { ItemSaldo } from '../services/saldos'
+import { cancelarOrden, listarOrdenes, reprogramarOrden } from '../services/ordenes'
 import type { Orden } from '../types'
 
 export default function Pendientes() {
   const { avisar } = useAviso()
   const [ordenes, setOrdenes] = useState<Orden[]>([])
-  const [omitidas, setOmitidas] = useState<Set<string>>(new Set())
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [avisoOmitidas, setAvisoOmitidas] = useState<string | null>(null)
   const [aCancelar, setACancelar] = useState<Orden | null>(null)
   const [aReprogramar, setAReprogramar] = useState<Orden | null>(null)
-  const [conSaldo, setConSaldo] = useState<Orden | null>(null)
 
   async function cargar() {
     setCargando(true)
-    setAvisoOmitidas(null)
     try {
-      const hoy = hoyLocal()
-      const [resueltas, atrasadas, deOmitidas] = await Promise.all([
+      const [resueltas, atrasadas] = await Promise.all([
         listarOrdenes({ estados: ['fallida', 'entregada_parcial'] }),
         // Pendientes cuya fecha de entrega ya pasó: hay que reagendarlas
-        listarOrdenes({ estado: 'pendiente', entregaAntesDe: hoy }),
-        // Órdenes de paradas omitidas; si falla, el resto de la pantalla igual se ve
-        listarOmitidas(hoy).catch((e: Error) => {
-          setAvisoOmitidas(e.message)
-          return [] as Orden[]
-        }),
+        listarOrdenes({ estado: 'pendiente', entregaAntesDe: hoyLocal() }),
       ])
-
-      // Las parciales cuyo saldo ya se creó dejan de estar pendientes
-      const parciales = resueltas.filter((o) => o.estado === 'entregada_parcial')
-      const yaResueltas = new Set<string>()
-      await Promise.all(
-        parciales.map(async (o) => {
-          try {
-            if (await guiaDeSaldo(o.numero_guia)) yaResueltas.add(o.id)
-          } catch {
-            /* si no se puede comprobar, se deja la orden visible */
-          }
-        }),
-      )
-
       atrasadas.sort((a, b) => a.fecha_entrega.localeCompare(b.fecha_entrega))
-      const vistos = new Set<string>()
-      const lista: Orden[] = []
-      for (const o of [...atrasadas, ...deOmitidas, ...resueltas]) {
-        if (vistos.has(o.id) || yaResueltas.has(o.id)) continue
-        vistos.add(o.id)
-        lista.push(o)
-      }
-      setOmitidas(new Set(deOmitidas.map((o) => o.id)))
-      setOrdenes(lista)
+      setOrdenes([...atrasadas, ...resueltas])
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -104,37 +69,18 @@ export default function Pendientes() {
     }
   }
 
-  async function confirmarSaldo(fecha: string, items: ItemSaldo[]) {
-    if (!conSaldo) return
-    try {
-      const guia = await crearOrdenSaldo(conSaldo, items, fecha)
-      avisar(
-        'exito',
-        `Orden ${guia} creada con el saldo de ${conSaldo.numero_guia} para el ${formatearFecha(fecha)}.`,
-      )
-      setConSaldo(null)
-      await cargar()
-    } catch (e) {
-      avisar('error', (e as Error).message)
-    }
-  }
-
   return (
     <div>
       <div className="encabezado">
         <h2>Pendientes de resolver</h2>
       </div>
       <p className="texto-suave">
-        Aquí aparecen las órdenes fallidas, las omitidas, las pendientes con fecha vencida y las
-        entregas parciales. Para las fallidas, omitidas y atrasadas puedes elegir una nueva fecha con
-        «Reprogramar» o cancelarlas. En las parciales, «Crear orden con saldo» genera una orden
-        nueva con lo que faltó entregar.
+        Aquí aparecen las órdenes fallidas, las entregas parciales y las pendientes cuya fecha de
+        entrega ya pasó (por ejemplo, paradas omitidas). Para las fallidas y las atrasadas puedes
+        elegir una nueva fecha de entrega con «Reprogramar».
       </p>
 
       {error && <p className="error">{error}</p>}
-      {avisoOmitidas && (
-        <p className="error">No se pudieron buscar las paradas omitidas: {avisoOmitidas}</p>
-      )}
 
       <div className="tarjeta tabla-contenedor">
         <table className="tabla">
@@ -173,18 +119,18 @@ export default function Pendientes() {
                   <td>{o.direccion}</td>
                   <td>
                     {formatearFecha(o.fecha_entrega)}
-                    {o.estado === 'pendiente' && o.fecha_entrega < hoyLocal() && (
-                      <small className="error"> atrasada</small>
-                    )}
+                    {o.estado === 'pendiente' && <small className="error"> atrasada</small>}
                   </td>
                   <td>
                     <EstadoBadge estado={o.estado} />
-                    {omitidas.has(o.id) && <small className="texto-suave"> · omitida</small>}
                   </td>
                   <td>
                     {o.estado === 'fallida' || o.estado === 'pendiente' ? (
                       <div className="acciones">
-                        <button className="btn btn-primario" onClick={() => setAReprogramar(o)}>
+                        <button
+                          className="btn btn-primario"
+                          onClick={() => setAReprogramar(o)}
+                        >
                           Reprogramar
                         </button>
                         <button className="btn btn-peligro" onClick={() => setACancelar(o)}>
@@ -192,14 +138,10 @@ export default function Pendientes() {
                         </button>
                       </div>
                     ) : (
-                      <div className="acciones">
-                        <button className="btn btn-primario" onClick={() => setConSaldo(o)}>
-                          Crear orden con saldo
-                        </button>
-                        <Link className="btn" to={`/ordenes/${o.id}`}>
-                          Ver
-                        </Link>
-                      </div>
+                      <span className="texto-suave">
+                        Entrega parcial: el saldo se gestionará con «orden con saldo» (4-19).{' '}
+                        <Link to={`/ordenes/${o.id}`}>Ver</Link>
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -226,10 +168,6 @@ export default function Pendientes() {
           onConfirmar={confirmarCancelacion}
           onCerrar={() => setACancelar(null)}
         />
-      )}
-
-      {conSaldo && (
-        <SaldoDialog orden={conSaldo} onConfirmar={confirmarSaldo} onCerrar={() => setConSaldo(null)} />
       )}
     </div>
   )
