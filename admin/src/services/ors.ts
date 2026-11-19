@@ -35,6 +35,8 @@ async function leerError(resp: Response): Promise<string> {
 export interface RutaCalculada {
   /** Línea siguiendo las calles, como [lat, lng] para Leaflet. */
   linea: [number, number][]
+  /** La misma línea partida en tramos: el tramo i va de la parada i a la parada i+1. */
+  tramos: [number, number][][]
   distanciaM: number
   duracionS: number
 }
@@ -61,13 +63,23 @@ export async function calcularRuta(
   const data = (await resp.json()) as {
     features?: {
       geometry: { coordinates: [number, number][] }
-      properties: { summary: { distance: number; duration: number } }
+      properties: { summary: { distance: number; duration: number }; way_points?: number[] }
     }[]
   }
   const f = data.features?.[0]
   if (!f) throw new Error('OpenRouteService no devolvió una ruta.')
+  const linea = f.geometry.coordinates.map(([lng, lat]) => [lat, lng] as [number, number])
+  // way_points: índice de cada parada dentro de la línea; sirve para cortarla por tramos.
+  const wp = f.properties.way_points
+  const tramos: [number, number][][] = []
+  if (wp && wp.length === puntos.length) {
+    for (let i = 0; i < wp.length - 1; i++) tramos.push(linea.slice(wp[i], wp[i + 1] + 1))
+  } else {
+    tramos.push(linea)
+  }
   return {
-    linea: f.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+    linea,
+    tramos,
     distanciaM: f.properties.summary.distance,
     duracionS: f.properties.summary.duration,
   }

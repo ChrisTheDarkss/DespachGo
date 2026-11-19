@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet'
 import L from '../lib/leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
+import { colorDeTramo, pesoDeTramo } from '../lib/coloresRuta'
 import { MAX_PUNTOS_RUTA, calcularRuta, orsDisponible } from '../services/ors'
 import type { RutaCalculada } from '../services/ors'
 
@@ -93,18 +94,37 @@ export default function MapaRuta({ puntos }: { puntos: PuntoMapa[] }) {
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <Ajustar puntos={puntos} />
-        {puntos.length > 1 &&
-          (ruta ? (
+        {(ruta
+          ? ruta.tramos.map((t, i) => ({ i, positions: t, recto: false }))
+          : puntos.slice(1).map((p, i) => ({
+              i,
+              positions: [
+                [puntos[i].lat, puntos[i].lng],
+                [p.lat, p.lng],
+              ] as [number, number][],
+              recto: true,
+            }))
+        )
+          .reverse() // primero los de menor prioridad: los primeros tramos quedan encima
+          .flatMap((t) => [
             <Polyline
-              positions={ruta.linea}
-              pathOptions={{ color: '#15803d', weight: 5, opacity: 0.85 }}
-            />
-          ) : (
+              key={`${t.i}-borde`}
+              positions={t.positions}
+              pathOptions={{ color: '#fff', weight: pesoDeTramo(t.i) + 3, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+            />,
             <Polyline
-              positions={puntos.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ color: '#15803d', weight: 3, opacity: 0.6, dashArray: '6 6' }}
-            />
-          ))}
+              key={t.i}
+              positions={t.positions}
+              pathOptions={{
+                color: colorDeTramo(t.i),
+                weight: pesoDeTramo(t.i),
+                opacity: 1,
+                lineCap: 'round',
+                lineJoin: 'round',
+                ...(t.recto ? { dashArray: '2 8' } : {}),
+              }}
+            />,
+          ])}
         {puntos.map((p) => (
           <Marker key={p.id} position={[p.lat, p.lng]} icon={icono(p.etiqueta)} />
         ))}

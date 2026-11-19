@@ -3,7 +3,7 @@
 Aplicación web para que el administrador cree órdenes, arme rutas y supervise el día. Está hecha con React, Vite, TypeScript y Leaflet, y se despliega en Vercel. Los datos viven en Supabase.
 
 **Responsable:** Persona 4. Respaldo: Persona 1.
-**Última actualización de este documento:** 18-11-2026 (se agregó OpenRouteService en el mapa y los botones de cancelar pasaron a rojo sólido).
+**Última actualización de este documento:** 19-11-2026 (resumen del día en vivo y con una sola tabla por conductor, colores por tramo y prioridad, OpenRouteService, botones de cancelar en rojo).
 
 ---
 
@@ -112,7 +112,7 @@ Tecnologías: React 18, Vite 5, TypeScript, React Router 6, react-leaflet 4 (map
 
 **Armar ruta.** Se elige fecha de la ruta (no anterior a hoy) y conductor (solo activos). La lista muestra las órdenes pendientes ordenadas por fecha de entrega, con las atrasadas marcadas; las programadas para después de la fecha de la ruta quedan ocultas salvo que se active «Mostrar también las programadas». Las órdenes seleccionadas forman el orden de visita, que se ajusta con las flechas ↑↓. La casilla **Agrupar** junta las órdenes del mismo teléfono y dirección en una sola parada y muestra una vista previa de cuántas paradas resultan. **Optimizar** (mínimo 3 órdenes) pide el orden sugerido a una Edge Function; **Asignar** valida, abre un diálogo de confirmación con el resumen (avisa si hay órdenes con fecha posterior a la de la ruta) y recién entonces crea la ruta.
 
-**Resumen del día.** Rutas de la fecha elegida, con conductor, estado de la ruta y tabla de paradas (posición, guías, cliente, dirección y estado).
+**Resumen del día.** Se actualiza **en vivo**: escucha los cambios de `paradas` y `rutas` con Supabase Realtime y se recarga sola (indicador verde «En vivo»); si Realtime no está activado, recarga cada 30 segundos. Se elige el **conductor** en un campo con búsqueda (debajo del mapa: se escribe parte del nombre y se elige de la lista, o se selecciona solo si hay una única coincidencia) y se muestra **una sola tabla** con sus paradas (posición, guías, cliente, dirección y estado), el estado de la ruta, el conteo por estado y el mapa de su ruta, con cada tramo en un color distinto (`lib/coloresRuta.ts`; si dos rutas comparten calle, gana la de menor orden).
 
 **Pendientes de resolver.** Reúne las órdenes fallidas, las de entrega parcial y las **pendientes con fecha de entrega vencida** (las atrasadas primero). Para fallidas y atrasadas: **Reprogramar** (elige nueva fecha, la orden queda pendiente) o **Cancelar** (con motivo). Las parciales solo se ven por ahora.
 
@@ -227,6 +227,10 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 | **6. Validaciones y avisos** | Se centralizaron las reglas en `lib/validaciones.ts` (con 28 casos de prueba verificados), se agregaron errores por campo en el formulario de orden, el diálogo `ConfirmDialog` (asignar ruta y cerrar sesión), un motivo válido en las cancelaciones, el mínimo de fecha en Armar ruta y avisos flotantes de éxito y error en cada acción. |
 | **7. OpenRouteService** | Nuevo `services/ors.ts` (ruta por calles y optimización con la clave `key_rutas` del `.env`). `MapaRuta` dibuja el recorrido real sobre OpenStreetMap con distancia y tiempo, y vuelve a la línea punteada si falla. `optimizacion.ts` usa ORS cuando hay clave y, si no, la Edge Function. `vite.config.ts` expone las variables con prefijo `key_`; se agregó `.env.example`. |
 | **8. Botones de peligro** | `.btn-peligro` en `index.css` pasó de borde rojo con fondo blanco a **rojo sólido con letra blanca** (cancelar orden en Pendientes, formulario y diálogo de motivo). El tono se cambia con `--peligro`. |
+| **9. Color por ruta y por tramo** | `colorDeTramo()` da un color distinto a cada línea entre paradas (ángulo áureo, sin rojo). `ors.ts` devuelve el recorrido partido en `tramos` con `way_points`, y los dos mapas dibujan un tramo por color (en línea recta punteada si no hay `key_rutas`). Antes: nuevo `lib/coloresRuta.ts` (8 colores, sin rojo) y `components/MapaRutasDia.tsx`: mapa del Resumen del día con todas las rutas, cada una con su color y su recorrido por calles si hay `key_rutas`. `rutas.ts` ahora trae `latitud` y `longitud` de las órdenes. |
+| **10. Prioridad en calles compartidas** | El color de cada tramo depende de su orden de visita (el primer tramo siempre tiene el mismo color, el segundo otro, etc.). Cuando dos rutas pasan por la misma calle, se dibuja encima el tramo más prioritario (menor orden) y más delgado, y los de menor prioridad asoman por los bordes, más gruesos (`pesoDeTramo` y `ordenarPorPrioridad` en `lib/coloresRuta.ts`). Para que se vea limpio: 8 colores fijos y bien separados, grosor de 4 a 7 px, borde blanco en cada línea y puntas redondeadas; las líneas rectas (sin ruta por calles) se dibujan con puntos. |
+| **11. Resumen en vivo** | `ResumenDia` se suscribe a Realtime (`paradas` y `rutas`), junta los cambios seguidos en una sola recarga y, como respaldo, recarga cada 30 s. Muestra «En vivo» y la hora de la última actualización. Requiere activar Realtime en esas tablas (ver sección 10). |
+| **12. Una tabla por conductor** | `ResumenDia` pasó de una tarjeta por ruta a un selector de conductor y una única tabla con el mapa de la ruta elegida; el selector quedó debajo del mapa y se puede buscar escribiendo el nombre. |
 
 ### Estado de las tareas del plan
 
@@ -250,6 +254,12 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 ---
 
 ## 10. Pendientes y puntos a vigilar
+
+- **Activar Realtime (Resumen en vivo).** Una sola vez, como migración nueva en `supabase/migrations/`:
+  ```sql
+  alter publication supabase_realtime add table public.paradas, public.rutas;
+  ```
+  Los eventos respetan las reglas RLS: el admin recibe todos. Sin esto el resumen igual se actualiza cada 30 s.
 
 - **Fechas de entrega vacías.** El panel supone que `fecha_entrega` nunca es nula. Comprobar en Supabase: `select count(*) from ordenes where fecha_entrega is null;`. Si da más de 0 (órdenes anteriores a la columna), hay que rellenarlas o hacer el panel tolerante.
 - **Entregas parciales.** Hoy solo se ven en Pendientes; su gestión depende de la tarea 4-19.
@@ -276,6 +286,7 @@ Las etapas son las del registro de la sección 9. «Nuevo» indica que el archiv
 | `lib/leaflet.ts` | Arregla los íconos de Leaflet al empaquetar. | — |
 | `lib/telefono.ts` | Normaliza y da formato a teléfonos chilenos. | — |
 | `lib/fechas.ts` | Fechas: hoy en hora de Santiago y formatos. | Etapa 3: `hoyLocal()` usa la hora de Santiago y se agrega `formatearFecha`. |
+| `lib/coloresRuta.ts` | Paleta de colores por ruta. | **Nuevo** (etapa 9). |
 | `lib/validaciones.ts` | Reglas de validación de órdenes, motivos y fechas de ruta. | **Nuevo** (etapa 6). |
 | `types/index.ts` | Tipos y estados. | Etapa 2: nombres y estados del esquema real. Etapa 3: `fecha_entrega`. |
 | `services/ordenes.ts` | Consultas y acciones sobre órdenes. | Etapa 2: nombres de columnas. Etapa 3: `guardar_orden`, `reprogramar_orden` y filtro por fecha de entrega. Etapa 4: filtro `entregaAntesDe`. |
@@ -287,6 +298,7 @@ Las etapas son las del registro de la sección 9. «Nuevo» indica que el archiv
 | `components/Fondo.tsx` | Fondo animado decorativo. | **Nuevo** (etapa 5). |
 | `components/EstadoBadge.tsx` | Etiqueta de color por estado. | Etapa 5: muestra el estado con espacios en vez de guion bajo. |
 | `components/MapaPin.tsx`, `SelectorProductos.tsx` | Mapa con pin movible y selector de productos. | — |
+| `components/MapaRutasDia.tsx` | Mapa con varias rutas, una por color. | **Nuevo** (etapa 9). |
 | `components/MapaRuta.tsx` | Mapa de ruta con pines numerados. | Etapa 5: línea de la ruta en verde. Etapa 7: ruta por calles con ORS, distancia y tiempo. |
 | `components/MotivoDialog.tsx` | Diálogo de motivo obligatorio. | Etapa 6: motivo de 5 a 300 caracteres, con contador. |
 | `components/FechaDialog.tsx` | Diálogo para elegir una nueva fecha. | **Nuevo** (etapa 3). |
@@ -295,7 +307,7 @@ Las etapas son las del registro de la sección 9. «Nuevo» indica que el archiv
 | `pages/Ordenes.tsx` | Lista, filtros y reprogramar. | Etapa 2: nombres de columnas. Etapa 3: columna y filtro de fecha de entrega. Etapa 4: botón Reprogramar. Etapa 6: avisos. |
 | `pages/OrdenForm.tsx` | Crear y editar orden. | Etapa 2: nombres de columnas. Etapa 3: campo de fecha de entrega. Etapa 6: errores por campo y avisos. |
 | `pages/ArmarRuta.tsx` | Elegir órdenes, agrupar, optimizar y asignar. | Etapa 2: nombres de columnas. Etapa 3: agrupar, atrasadas y fecha de entrega. Etapa 6: fecha mínima, diálogo de confirmación y avisos. |
-| `pages/ResumenDia.tsx` | Rutas y paradas del día. | Etapa 2: posición de la parada. |
+| `pages/ResumenDia.tsx` | Rutas y paradas del día. | Etapa 2: posición de la parada. Etapa 9: mapa y color por ruta. Etapa 11: actualización en vivo. |
 | `pages/Pendientes.tsx` | Fallidas, parciales y atrasadas. | Etapa 2: estado `entregada_parcial`. Etapa 3: reprogramar con fecha. Etapa 4: incluye pendientes atrasadas. Etapa 6: avisos. |
 
 Fuera de `src/`: `vite.config.ts` (etapa 7: `envPrefix`), `.env.example` (etapa 7), `README.md` (resumen corto que remite a este documento), `package.json`, `vite.config.ts`, `tsconfig.json`, `vercel.json`, `index.html`, `.env.example` y `.gitignore`.

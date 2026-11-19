@@ -41,7 +41,7 @@ export async function listarRutasDelDia(fecha: string): Promise<Ruta[]> {
   const { data, error } = await supabase
     .from('rutas')
     .select(
-      '*, perfiles!conductor_id(nombre), paradas(id, posicion_sugerida, posicion_final, estado, parada_ordenes(ordenes(numero_guia, cliente_nombre, direccion)))',
+      '*, perfiles!conductor_id(nombre), paradas(id, posicion_sugerida, posicion_final, estado, parada_ordenes(ordenes(numero_guia, cliente_nombre, direccion, latitud, longitud)))',
     )
     .eq('fecha', fecha)
     .order('creado_en', { ascending: true })

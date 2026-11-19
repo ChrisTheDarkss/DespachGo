@@ -87,6 +87,8 @@ export interface Parada {
       numero_guia: string
       cliente_nombre: string
       direccion: string
+      latitud: number | null
+      longitud: number | null
     } | null
   }[]
 }

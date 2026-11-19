@@ -712,3 +712,56 @@ select[aria-invalid='true'] {
     animation: none;
   }
 }
+
+/* ---------- Colores por ruta ---------- */
+.leyenda-rutas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-top: 0.6rem;
+}
+
+.leyenda-rutas i,
+.punto-ruta {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.punto-ruta {
+  margin-right: 0.4rem;
+}
+
+/* ---------- Indicador en vivo ---------- */
+.en-vivo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--texto-suave, #667085);
+}
+
+.en-vivo i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #98a2b3;
+}
+
+.en-vivo.activo i {
+  background: #16a34a;
+  animation: pulso-vivo 1.6s ease-in-out infinite;
+}
+
+@keyframes pulso-vivo {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .en-vivo.activo i {
+    animation: none;
+  }
+}
