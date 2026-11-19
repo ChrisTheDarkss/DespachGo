@@ -1,283 +1,675 @@
-Bot de WhatsApp para notificaciones de despacho
-Estado del proyecto: desarrollo y pruebas de integración. El envío directo con Baileys se comprobó exitosamente; la automatización completa con Supabase y el procesamiento persistente de respuestas siguen pendientes de validación.
+# Bot de WhatsApp para Gestión de Despachos
 
-1. Descripción
-Proyecto de bot de WhatsApp desarrollado en Node.js y TypeScript para enviar notificaciones relacionadas con rutas de despacho y registrar las respuestas de los destinatarios.
+## 1. Descripción del proyecto
 
-El sistema se conecta a WhatsApp mediante Baileys, utiliza Supabase como base de datos y está pensado para trabajar con una cola de mensajes. Cuando un conductor inicia una ruta, el sistema de despacho puede generar mensajes pendientes para las paradas. El bot debe reservarlos, enviarlos de manera controlada y actualizar su estado.
+Sistema de mensajería automatizada desarrollado con **Node.js, TypeScript, Baileys y Supabase**, orientado a gestionar notificaciones de despacho mediante WhatsApp.
 
-Este README documenta lo construido y probado durante el desarrollo, sin sustituir ni reorganizar los archivos existentes.
-2. Objetivo y flujo previsto
-1. Un conductor inicia una ruta desde la aplicación de despacho.
-2. La lógica del backend/Supabase genera las notificaciones asociadas a las paradas.
-3. El bot consulta y reserva mensajes pendientes mediante una función RPC.
-4. Envía los mensajes por WhatsApp, de forma secuencial y con una pausa prevista de 5 a 10 segundos entre envíos.
-5. Registra los resultados en Supabase: enviado, error recuperable o error definitivo.
-6. Recibe respuestas del cliente y las asocia con la parada/ruta correspondiente.
-7. La aplicación de despacho puede consultar la confirmación del cliente.
-Importante: este es el flujo objetivo. Se han probado sus componentes por separado, pero no se ha confirmado todavía la ejecución completa de extremo a extremo.
-3. Tecnologías utilizadas
-Tecnología	Uso	Versión comprobada
-Node.js	Entorno de ejecución	v24.22.1
-TypeScript	Código del bot	No registrada
-@whiskeysockets/baileys	Conexión y envío de WhatsApp	7.0.0-rc14
-@supabase/supabase-js	Acceso a Supabase y funciones RPC	No registrada
-Supabase / PostgreSQL	Persistencia de mensajes, rutas, paradas y respuestas	No registrada
-@hapi/boom	Dependencia relacionada con errores	10.0.1 directa y 9.1.4 transitiva
-dotenv	Variables de entorno	No registrada
-tsx	Ejecución de scripts TypeScript durante pruebas	No registrada
+El sistema permite enviar mensajes a clientes cuando sus pedidos se encuentran en camino, recibir respuestas y registrar automáticamente la información en una base de datos.
 
+El bot se integra con las rutas y paradas existentes en Supabase, permitiendo asociar cada respuesta del cliente con su pedido correspondiente.
 
-Entorno de trabajo utilizado: Windows y PowerShell.
-4. Estructura de archivos trabajados
-La siguiente estructura muestra los archivos creados o revisados durante las sesiones. No pretende ser un listado exhaustivo de todo el repositorio.
+### Objetivo principal
+
+Automatizar la comunicación entre el sistema de despachos y los clientes, reduciendo la intervención manual y manteniendo un historial de los mensajes enviados y recibidos.
+
+### Funcionalidades implementadas
+
+- Conexión con WhatsApp mediante Baileys.
+- Autenticación mediante código QR.
+- Persistencia de sesiones de WhatsApp.
+- Envío de mensajes a números autorizados.
+- Integración con Supabase.
+- Procesamiento de mensajes mediante una cola.
+- Validación del estado de las rutas.
+- Control de intentos de envío.
+- Prevención de reintentos automáticos ante resultados inciertos.
+- Recepción automática de respuestas.
+- Interpretación de respuestas `1`, `2` y `3`.
+- Registro de respuestas en Supabase.
+- Actualización de la confirmación del cliente.
+- Prevención de respuestas duplicadas mediante identificadores externos.
+- Reconexión automática de WhatsApp.
+- Registros de conexión simplificados.
+
+---
+
+## 2. Tecnologías utilizadas
+
+| Tecnología | Función |
+|---|---|
+| Node.js | Entorno de ejecución |
+| TypeScript | Lenguaje principal |
+| Baileys | Comunicación con WhatsApp |
+| Supabase | Base de datos y funciones RPC |
+| PostgreSQL | Almacenamiento relacional |
+| dotenv | Variables de entorno |
+| Pino | Configuración de registros |
+| qrcode-terminal | Visualización del QR |
+| tsx | Ejecución de TypeScript |
+| Git | Control de versiones |
+
+### Versiones verificadas durante el desarrollo
+
+- Node.js: `24.22.1`
+- Baileys: `7.0.0-rc14`
+- TypeScript: `7.0.2`
+- tsx: `4.23.15`
+- dotenv: `18.0.9`
+
+Las versiones instaladas pueden consultarse mediante:
+
+```bash
+npm list --depth=0
+```
+
+---
+
+## 3. Estructura del proyecto
+
+La siguiente estructura presenta los archivos principales desarrollados y utilizados durante las pruebas.
+
+```text
 bot-whatsapp/
-├── auth/                           # Credenciales/sesión de WhatsApp (privado)
-├── .env                            # Variables de entorno (privado)
+│
+├── auth/
+│   └── Archivos de autenticación de WhatsApp
+│
 ├── src/
+│   │
+│   ├── index.ts
+│   │
 │   ├── whatsapp/
-│   │   └── conexion.ts             # Conexión, QR y reconexión de Baileys
+│   │   └── conexion.ts
+│   │
 │   ├── mensajeria/
-│   │   ├── interfaz.ts              # Contrato Mensajero y errores propios
-│   │   └── baileys.ts               # Implementación de envío con Baileys
-│   ├── utils/
-│   │   └── telefono.ts              # Normalización y construcción de JID
-│   ├── respuestas/
-│   │   ├── entrante.ts              # Escucha de mensajes entrantes
-│   │   └── procesador.ts            # Clasificación inicial de respuestas
+│   │   ├── interfaz.ts
+│   │   └── baileys.ts
+│   │
 │   ├── cola/
-│   │   ├── tipos.ts                 # Tipos de la cola
-│   │   ├── colaLocal.ts             # Cola temporal en memoria
-│   │   ├── procesador.ts            # Procesamiento secuencial
-│   │   └── repositorioSupabase.ts   # Acceso a cola y respuestas vía RPC
+│   │   ├── colaLocal.ts
+│   │   ├── procesador.ts
+│   │   ├── repositorioSupabase.ts
+│   │   ├── procesadorSupabase.ts
+│   │   └── cicloSupabase.ts
+│   │
+│   ├── respuestas/
+│   │   ├── entrante.ts
+│   │   └── procesador.ts
+│   │
 │   ├── lib/
-│   │   └── supabase.ts              # Cliente Supabase de servidor
+│   │   └── supabase.ts
+│   │
+│   ├── utils/
+│   │   ├── telefono.ts
+│   │   └── resolverTelefonoWhatsApp.ts
+│   │
 │   ├── prueba-cola.ts
-│   ├── prueba-supabase.ts
-│   ├── prueba-pendientes.ts
-│   ├── prueba-detalle-pendientes.ts
+│   ├── prueba-envio-directo.ts
 │   ├── prueba-envio-supabase.ts
-│   ├── prueba-segundo-numero.ts
-│   ├── diagnostico-baileys.ts
-│   └── prueba-envio-directo.ts
-└── package.json
-Algunos scripts son diagnósticos temporales; conviene separarlos o eliminarlos únicamente después de confirmar que ya no son necesarios.
-5. Módulos implementados
-5.1. Conexión con WhatsApp
-Archivo: src/whatsapp/conexion.ts.
-- conectarWhatsApp(): inicia la conexión mediante Baileys.
-- obtenerSocket(): devuelve el socket activo o null.
-- Maneja eventos de conexión, visualización de QR cuando corresponde y reconexión.
-- Integra el listener de mensajes entrantes.
-- La sesión se conserva en la carpeta auth/.
-Prueba: se observó el estado open y el mensaje WhatsApp conectado correctamente.
+│   ├── prueba-procesador-supabase.ts
+│   ├── prueba-envio-controlado.ts
+│   ├── prueba-envio-exclusivo.ts
+│   └── prueba-recepcion.ts
+│
+├── .env
+├── package.json
+├── package-lock.json
+└── tsconfig.json
+```
 
-Precaución: no publicar, compartir ni borrar accidentalmente auth/. Contiene información sensible de la sesión.
-5.2. Normalización de teléfonos
-Archivo: src/utils/telefono.ts.
-- normalizarTelefono(telefono): elimina caracteres de formato y admite números móviles chilenos en formato 9XXXXXXXX o 569XXXXXXXX, devolviendo +569XXXXXXXX.
-- telefonoAJid(telefono): convierte el teléfono normalizado al identificador de WhatsApp 569XXXXXXXX@s.whatsapp.net.
-Se comprobó que el número consultado desde Supabase tenía 12 caracteres y comenzaba por +569.
-5.3. Interfaz de mensajería
-Archivo: src/mensajeria/interfaz.ts.
+**Nota:** algunos archivos de prueba se conservan como referencia histórica. No todos deben ejecutarse nuevamente, ya que ciertas pruebas utilizaron funciones temporales de Supabase que posteriormente fueron eliminadas.
 
-Incluye el contrato Mensajero y los errores específicos:
-- WhatsAppDesconectadoError.
-- NumeroSinWhatsAppError.
-5.4. Envío por Baileys
-Archivo: src/mensajeria/baileys.ts.
+---
 
-Clase MensajeroBaileys, método enviarMensaje(telefono, texto):
-1. Comprueba que exista un socket conectado.
-2. Rechaza textos vacíos.
-3. Normaliza el destino y construye el JID.
-4. Consulta socket.onWhatsApp(jid).
-5. Si la consulta devuelve un contacto con exists: false, rechaza el número.
-6. Si la consulta devuelve [], no asume que el teléfono carezca de WhatsApp y continúa usando el JID.
-7. Ejecuta socket.sendMessage(destino, { text: texto }).
-8. Comprueba que la respuesta incluya mensaje.key.id.
-La corrección del paso 6 se realizó después de detectar que onWhatsApp() devolvía un arreglo vacío incluso para un teléfono que sí recibía mensajes.
+## 4. Configuración del entorno
 
-Limitación importante: recibir un ID de sendMessage() no garantiza la entrega final. Para el número de prueba conocido, la recepción fue confirmada manualmente.
-5.5. Cola local
-Archivos:
-- src/cola/tipos.ts: tipo MensajeCola con id, telefono, texto, estado, intentos y error opcional.
-- src/cola/colaLocal.ts: almacenamiento temporal en memoria.
-- src/cola/procesador.ts: procesamiento secuencial usando la interfaz Mensajero, con pausas previstas de 5–10 segundos.
-Prueba: src/prueba-cola.ts ejecutó una simulación con tres mensajes. Los estados finales fueron enviado, error, enviado.
+### 4.1 Requisitos
 
-La cola local es útil para validar la lógica, pero no garantiza persistencia ni envío exactamente una vez ante reinicios.
-5.6. Cliente de Supabase
-Archivo: src/lib/supabase.ts.
+- Node.js instalado.
+- npm disponible.
+- Proyecto de Supabase configurado.
+- Credenciales de acceso a Supabase.
+- Una cuenta de WhatsApp autorizada para vincular el bot.
 
-Exporta obtenerSupabase() utilizando las variables SUPABASE_URL y SUPABASE_SECRET_KEY, con sesión persistente y refresco automático de autenticación desactivados.
+### 4.2 Instalación
 
-Prueba: src/prueba-supabase.ts consultó correctamente la tabla configuracion en modo lectura.
-5.7. Repositorio de mensajes en Supabase
-Archivo: src/cola/repositorioSupabase.ts.
+Clonar el repositorio:
 
-Clase RepositorioSupabase con métodos:
-Método	Función
-reservarMensajes(limite = 1)	Reserva mensajes mediante RPC y los adapta al tipo MensajeCola.
-marcarEnviado(id)	Marca el registro como enviado mediante RPC.
-marcarError(id, detalle, definitivo = false)	Registra el error; permite reintento o cierre definitivo.
-registrarRespuesta(telefono, texto, idExterno)	Invoca la RPC de registro de respuestas.
-consultarPendientes()	Consulta la cantidad de mensajes pendientes sin reservarlos.
+```bash
+git clone URL_DEL_REPOSITORIO
+```
 
+Ingresar al directorio:
 
-Se verificó que el proyecto compilaba con npm.cmd run check después de incorporar este repositorio.
-5.8. Recepción y clasificación inicial de respuestas
-Archivos: src/respuestas/entrante.ts y src/respuestas/procesador.ts.
-- Se escucha el evento messages.upsert de Baileys.
-- Se extrae y clasifica el texto entrante.
-- Se preparan datos estructurados para su posterior persistencia.
-Pendiente: conectar y verificar el registro real en Supabase, resolver la asociación de identificadores @lid con teléfonos y unificar el significado de las opciones 1, 2 y 3.
-6. Modelo de datos relevante en Supabase
-Tabla public.mensajes_whatsapp
-Campos identificados:
-Campo	Propósito
-id	Identificador UUID del mensaje.
-parada_id	Relación con la parada del despacho.
-telefono	Número de destino/origen.
-texto	Contenido del mensaje.
-direccion	enviado o recibido según el esquema utilizado.
-estado	pendiente, enviado o error.
-error_detalle	Descripción de un fallo.
-enviado_en	Fecha/hora de envío registrada.
-intentos	Cantidad de intentos.
-creado_en	Fecha de creación.
-actualizado_en	Fecha de actualización.
-reservado_hasta	Vencimiento de la reserva temporal.
-id_externo	Identificador del mensaje en WhatsApp.
+```bash
+cd bot-whatsapp
+```
 
+Instalar dependencias:
 
-Otras entidades involucradas: rutas, paradas, ordenes y configuracion. En paradas se contemplan confirmacion_cliente y respuesta_cliente.
-Funciones RPC existentes
-Se comprobó la existencia de estas cuatro funciones SQL:
-Función	Comportamiento conocido
-bot_reservar_mensajes(p_limite, p_max_intentos)	Reserva pendientes, incrementa intentos, utiliza bloqueo FOR UPDATE SKIP LOCKED y una reserva temporal de aproximadamente 2 minutos.
-bot_marcar_enviado(p_mensaje)	Marca como enviado, registra fecha y libera reserva.
-bot_marcar_error(p_mensaje, p_detalle, p_definitivo, p_max_intentos)	Marca error definitivo o deja pendiente con demora para reintentar, según el caso.
-bot_registrar_respuesta(p_telefono, p_texto, p_id_externo)	Registra respuestas entrantes, evita duplicados por ID externo e intenta asociarlas con una parada de ruta activa.
+```bash
+npm install
+```
 
+### 4.3 Variables de entorno
 
-El esquema SQL de referencia se trabajó como 009_funciones_bot.sql. No se ha comprobado todavía todo el flujo de integración de estas RPC en producción.
-7. Pruebas realizadas y resultados
-Prueba	Resultado	Estado
-Conexión y autenticación de WhatsApp	Conexión open	Confirmado
-Envío previo a número autorizado	Mensaje recibido	Confirmado
-Cola local con tres mensajes simulados	enviado, error, enviado	Confirmado en simulación
-Consulta a Supabase (configuracion)	Lectura correcta	Confirmado
-Conteo de pendientes en Supabase	2 pendientes en el momento de la consulta	Confirmado históricamente
-Inspección de pendientes	Teléfonos con formato válido, texto y parada asociados	Confirmado históricamente
-Primer envío integrado con Supabase	Falló por validación onWhatsApp(); no se envió	Fallido
-Verificación del segundo teléfono con onWhatsApp()	[]	Inconcluso sobre existencia real
-Verificación de número conocido con onWhatsApp()	[] en ambos formatos	Confirmó limitación de la verificación
-Envío directo tras corregir MensajeroBaileys	Baileys devolvió ID y el destinatario confirmó recepción	Confirmado
-Envío directo al segundo número autorizado	Se propuso la prueba, pero no se registró su resultado	Pendiente
-Procesamiento completo de respuestas en Supabase	Sin prueba integral confirmada	Pendiente
+Crear un archivo `.env` en la raíz del proyecto:
 
+```env
+SUPABASE_URL=URL_DEL_PROYECTO
+SUPABASE_SECRET_KEY=CLAVE_SECRETA
+```
 
-IDs de registros usados durante las pruebas
-Se inspeccionaron dos mensajes de prueba en Supabase:
-- Primer registro: 7490da97-a395-4667-b614-ed806e887429.
-- Segundo registro: b0cd9074-386f-45c6-807b-c67bbfbbac14.
-En la primera prueba integrada se reservó el primer registro, pero el envío se detuvo por NumeroSinWhatsAppError. El código de prueba contemplaba marcar ese error como definitivo. El estado final de ese registro debe verificarse en la base de datos antes de reintentarlo. No debe suponerse que sigue pendiente.
+Las credenciales deben mantenerse privadas.
 
-El conteo original de dos pendientes no representa necesariamente el estado actual después de la prueba integrada.
-8. Diagnóstico del problema onWhatsApp()
-Síntoma
-La conexión se establecía, pero la consulta devolvía:
-Cantidad de resultados: 0
-Existe: null
-Tiene JID: false
-Esto ocurría con el segundo número de prueba y también con un número que previamente había recibido mensajes.
-Investigación
-Se revisó la implementación instalada en:
-node_modules/@whiskeysockets/baileys/lib/Socket/socket.js
-En la versión 7.0.0-rc14, onWhatsApp():
-- Acepta número o JID y normaliza internamente el teléfono.
-- Ejecuta una consulta USync.
-- Filtra los resultados para conservar los que contienen el campo contact.
-Por tanto, un arreglo vacío no es una prueba suficiente de que el número no exista en WhatsApp.
-Corrección aplicada
-Se modificó src/mensajeria/baileys.ts para no lanzar NumeroSinWhatsAppError cuando la consulta retorna []. Si no existe un contacto confirmado, el método intenta enviar al JID normalizado.
+**No subir a Git:**
 
-Resultado: el envío directo al número conocido generó un ID y el usuario confirmó que el mensaje llegó.
+- `.env`
+- `auth/`
+- Claves privadas
+- Credenciales de Supabase
+- Registros que contengan material criptográfico
 
-Precaución: el envío directo puede fallar con otros números y debe seguir protegido por manejo de errores, reintentos controlados y registros de estado. No se deben interpretar las respuestas de sendMessage() como comprobación automática de entrega.
-9. Comandos útiles
-Ejecutar desde la carpeta del proyecto:
-cd C:\Users\Wido\bot-whatsapp
-Verificar tipos/compilación:
-npm.cmd run check
-Consultar versiones:
-npm.cmd list @whiskeysockets/baileys
-npm.cmd list @hapi/boom
-node --version
-Prueba de cola simulada:
-npx.cmd tsx src/prueba-cola.ts
-Prueba de lectura de Supabase:
-npx.cmd tsx src/prueba-supabase.ts
-Consultar cantidad de pendientes sin reservar:
-npx.cmd tsx src/prueba-pendientes.ts
-Diagnóstico de un número autorizado sin enviar mensajes:
-npx.cmd tsx src/diagnostico-baileys.ts +569XXXXXXXX
-Envío real directo a un número autorizado (envía un mensaje; ejecutar solo una vez y comprobar recepción):
-npx.cmd tsx src/prueba-envio-directo.ts +569XXXXXXXX
-No ejecutar indiscriminadamente src/prueba-envio-supabase.ts: reserva y modifica mensajes reales de la tabla y podría seleccionar otro destinatario pendiente.
-10. Configuración y seguridad
-Variables utilizadas en .env:
-SUPABASE_URL=https://TU-PROYECTO.supabase.co
-SUPABASE_SECRET_KEY=TU_CLAVE_PRIVADA_DEL_SERVIDOR
-Estos valores son ejemplos; utilizar los valores reales solo en el entorno local o servidor autorizado.
+Ejemplo de `.gitignore`:
 
-Recomendaciones:
-- No subir .env, auth/, claves, archivos de sesión ni registros criptográficos a Git.
-- Añadir reglas de exclusión en .gitignore.
-- Mantener la clave secreta de Supabase exclusivamente en el backend.
-- No compartir en capturas ni logs datos privados de sesión: durante una prueba Baileys imprimió objetos SessionEntry con claves criptográficas.
-- Evitar registrar números completos y textos de clientes en logs de diagnóstico.
-- Enviar mensajes solo a números autorizados y conforme a las reglas aplicables de WhatsApp y privacidad.
-- Considerar que Baileys es una integración no oficial; puede cambiar su comportamiento y presentar restricciones de servicio.
-Ejemplo de reglas de .gitignore (integrarlas con las que ya existan):
+```gitignore
 node_modules/
 .env
-.env.*
-!.env.example
 auth/
+dist/
 *.log
-11. Problemas y tareas pendientes
-Prioridad alta
-1. Comprobar el estado actual de los registros de prueba en Supabase, especialmente el primero, que pudo quedar como error definitivo.
-2. Probar el envío directo al segundo número autorizado, sin reservar registros de Supabase, y verificar recepción real.
-3. Integrar la versión corregida de MensajeroBaileys con el procesador persistente de Supabase, utilizando reservas RPC y control de errores.
-4. Evitar duplicados si el envío se acepta pero falla el registro del estado, o si el proceso se reinicia mientras existe una reserva.
-5. Alinear las opciones de respuesta. Actualmente existe una discrepancia:
-   Respuesta	Clasificador inicial de TypeScript	RPC de Supabase
-   1	Confirmación	confirmo
-   2	Consulta	no_habra_nadie
-   3	No disponible	quiere_hablar
-   
-   
-   Debe definirse un único significado y aplicarlo en los mensajes enviados, el bot y la base de datos.
-6. Resolver los identificadores @lid de mensajes entrantes para asociar respuestas con el teléfono y la parada correctos.
-7. Conectar y probar bot_registrar_respuesta con respuestas reales, incluidos duplicados y texto libre.
-Prioridad media
-- Comprobar qué ocurre ante desconexiones de WhatsApp durante el envío.
-- Añadir registro estructurado de errores sin información sensible.
-- Implementar un ciclo de trabajo continuo que consulte la cola sin crear instancias duplicadas.
-- Confirmar estados de entrega mediante eventos cuando se necesite distinguir aceptación, entrega y lectura.
-- Revisar políticas de reintentos y errores definitivos para números no verificables.
-- Añadir pruebas automatizadas para normalización de teléfonos, cola y clasificación de respuestas.
-- Preparar despliegue estable con supervisión de procesos y protección de credenciales.
-12. Próximo hito recomendado
-Completar una prueba controlada de extremo a extremo con un único registro autorizado:
-1. Confirmar que el teléfono recibe mensajes mediante envío directo.
-2. Revisar el estado real del registro en Supabase.
-3. Reservar un único mensaje de prueba identificado y autorizado.
-4. Enviarlo mediante MensajeroBaileys.
-5. Registrar correctamente el resultado sin duplicar envíos.
-6. Responder desde el teléfono y comprobar la actualización de la parada en Supabase.
-Solo después de esta prueba conviene habilitar el procesamiento automático de toda la cola.
-Resumen del avance: ya funcionan la conexión de WhatsApp, el envío directo confirmado, la normalización de teléfonos, la cola simulada y la comunicación básica con Supabase. También se implementó el repositorio de funciones RPC. Falta cerrar la integración completa, validar la recepción y persistencia de respuestas, y reforzar el manejo de reintentos y duplicados.
+```
+
+---
+
+## 5. Conexión con WhatsApp
+
+La conexión se implementa en:
+
+`src/whatsapp/conexion.ts`
+
+### Funcionamiento
+
+1. Cargar las credenciales almacenadas en `auth/`.
+2. Crear el socket mediante Baileys.
+3. Mostrar el QR cuando sea necesario.
+4. Guardar las actualizaciones de credenciales.
+5. Registrar el listener de respuestas.
+6. Detectar cuándo la conexión está abierta.
+7. Intentar reconectar ante determinadas desconexiones.
+
+### Configuración del socket
+
+```typescript
+const socket = makeWASocket({
+  auth: state,
+  logger: pino({ level: "silent" }),
+  markOnlineOnConnect: false
+});
+```
+
+Se utiliza un nivel de registro silencioso para reducir la información emitida por el logger configurado.
+
+### Reconexión
+
+El sistema incorpora un mecanismo de reconexión con una espera de cinco segundos.
+
+Si WhatsApp informa que la sesión fue cerrada definitivamente, se indica que es necesario volver a vincular la cuenta.
+
+### Resultado de las pruebas
+
+La conexión se realizó correctamente utilizando las credenciales existentes, sin necesidad de generar un nuevo QR.
+
+---
+
+## 6. Envío de mensajes
+
+La implementación principal se encuentra en:
+
+`src/mensajeria/baileys.ts`
+
+### Funcionamiento
+
+El módulo permite:
+
+- Validar el número telefónico.
+- Normalizar números chilenos.
+- Consultar la disponibilidad del destinatario mediante Baileys.
+- Enviar el mensaje utilizando el socket activo.
+- Detectar errores de envío.
+
+### Formato telefónico
+
+El sistema utiliza números chilenos normalizados.
+
+Ejemplo:
+
+```text
++569XXXXXXXX
+```
+
+La normalización se encuentra en:
+
+`src/utils/telefono.ts`
+
+### Validaciones
+
+Antes de enviar un mensaje se comprueba que el número tenga un formato válido y que exista una conexión utilizable.
+
+La aceptación del mensaje por Baileys no equivale necesariamente a una confirmación de lectura por parte del cliente.
+
+---
+
+## 7. Sistema de colas
+
+El proyecto comenzó con una cola local utilizada para comprobar el procesamiento de mensajes.
+
+Posteriormente se incorporó una cola persistente mediante Supabase.
+
+### Componentes principales
+
+**`colaLocal.ts`**
+
+Implementación inicial de una cola de mensajes para pruebas.
+
+**`procesador.ts`**
+
+Procesamiento de los mensajes almacenados en la cola local.
+
+**`repositorioSupabase.ts`**
+
+Comunicación con las funciones RPC de Supabase.
+
+**`procesadorSupabase.ts`**
+
+Control del procesamiento de mensajes persistentes.
+
+**`cicloSupabase.ts`**
+
+Lógica de ejecución repetitiva del procesador, con intervalos entre operaciones.
+
+### Flujo del procesador de Supabase
+
+```text
+Consultar cola
+      |
+      v
+Reservar mensaje
+      |
+      v
+Verificar ruta activa
+      |
+      v
+Autorizar inicio del envío
+      |
+      v
+Estado: revision
+      |
+      v
+Enviar mediante Baileys
+      |
+      v
+Estado: enviado
+```
+
+### Control de estados
+
+| Estado | Descripción |
+|---|---|
+| `pendiente` | Mensaje esperando procesamiento |
+| `revision` | Envío iniciado o resultado pendiente de conciliación |
+| `enviado` | Baileys aceptó el mensaje y Supabase registró el envío |
+| `error` | Mensaje con error registrado |
+
+### Prevención de duplicados
+
+Antes de enviar, el procesador cambia el mensaje a `revision`.
+
+Si ocurre un error después de iniciar el envío, no se ejecuta automáticamente otro intento, debido a que el mensaje podría haber sido aceptado por WhatsApp.
+
+Esto reduce el riesgo de enviar notificaciones duplicadas.
+
+---
+
+## 8. Integración con Supabase
+
+La conexión se implementa en:
+
+`src/lib/supabase.ts`
+
+El sistema utiliza el cliente de Supabase y funciones RPC para gestionar los mensajes.
+
+### Tablas principales
+
+**`rutas`**
+
+Contiene las rutas de despacho y su estado operativo.
+
+**`paradas`**
+
+Representa las entregas asociadas a cada ruta.
+
+Incluye campos relacionados con la confirmación y respuesta del cliente.
+
+**`mensajes_whatsapp`**
+
+Almacena los mensajes enviados y recibidos.
+
+Entre sus campos se encuentran:
+
+- `id`
+- `parada_id`
+- `telefono`
+- `texto`
+- `direccion`
+- `estado`
+- `intentos`
+- `enviado_en`
+- `reservado_hasta`
+- `id_externo`
+- `creado_en`
+
+### Funciones RPC utilizadas
+
+| Función | Responsabilidad |
+|---|---|
+| `bot_reservar_mensajes` | Reservar mensajes pendientes |
+| `bot_iniciar_envio` | Autorizar el inicio del envío |
+| `bot_marcar_enviado` | Registrar el envío exitoso |
+| `bot_marcar_error` | Registrar errores de procesamiento |
+| `bot_registrar_respuesta` | Guardar respuestas recibidas |
+
+Las funciones temporales creadas exclusivamente para las pruebas controladas fueron eliminadas posteriormente.
+
+---
+
+## 9. Recepción de respuestas
+
+La recepción automática se implementa en:
+
+`src/respuestas/entrante.ts`
+
+El procesamiento de respuestas se encuentra en:
+
+`src/respuestas/procesador.ts`
+
+### Funcionamiento
+
+Cuando llega un mensaje de WhatsApp:
+
+1. Baileys detecta el mensaje entrante.
+2. Se descartan mensajes enviados por el propio bot.
+3. Se omiten grupos y mensajes de estado.
+4. Se obtiene el contenido de texto.
+5. Se identifica el teléfono del remitente.
+6. Se interpreta la respuesta.
+7. Se registra mediante Supabase.
+8. Se actualiza la confirmación de la parada correspondiente, cuando procede.
+
+### Respuestas reconocidas
+
+| Respuesta | Interpretación |
+|---|---|
+| `1` | `confirmo` |
+| `2` | `no_habra_nadie` |
+| `3` | `quiere_hablar` |
+| Otro texto | `otro` |
+
+### Identificación del remitente
+
+El sistema contempla identificadores de WhatsApp de tipo:
+
+- `@s.whatsapp.net`
+- `@lid`
+
+Para los identificadores `@lid` se utiliza un mecanismo de resolución hacia el número telefónico cuando Baileys dispone de la correspondencia.
+
+### Control de mensajes duplicados
+
+Los mensajes entrantes incluyen un identificador externo proporcionado por WhatsApp.
+
+Supabase utiliza este identificador para evitar almacenar dos veces una misma respuesta.
+
+---
+
+## 10. Pruebas realizadas
+
+### 10.1 Conexión con Supabase
+
+**Resultado:** exitosa.
+
+Se comprobó que el proyecto podía consultar información existente en la base de datos.
+
+### 10.2 Conexión con WhatsApp
+
+**Resultado:** exitosa.
+
+Se verificó la autenticación mediante Baileys y la reutilización de las credenciales guardadas.
+
+### 10.3 Cola local
+
+**Resultado:** funcionamiento validado.
+
+Se realizaron pruebas con múltiples mensajes, incluyendo casos exitosos y errores controlados.
+
+### 10.4 Envío desde Supabase
+
+**Resultado:** exitoso.
+
+Se comprobó que un mensaje almacenado en Supabase podía reservarse, enviarse mediante Baileys y registrarse como enviado.
+
+### 10.5 Envío exclusivo de prueba
+
+**Resultado:** exitoso.
+
+Se creó una ruta de prueba y un mensaje específico.
+
+El sistema verificó que:
+
+- La ruta estuviera activa.
+- El mensaje estuviera pendiente.
+- El número fuera el autorizado para pruebas.
+- El mensaje no tuviera una reserva vigente.
+
+Posteriormente se utilizó una función temporal para reservar exclusivamente el mensaje seleccionado.
+
+El mensaje fue recibido correctamente en WhatsApp.
+
+### 10.6 Recepción de respuestas
+
+**Resultado:** exitoso.
+
+El cliente respondió:
+
+```text
+1
+```
+
+Supabase registró:
+
+```text
+confirmacion_cliente = confirmo
+respuesta_cliente = 1
+```
+
+Posteriormente, antes de finalizar la ruta, se realizó una segunda prueba:
+
+```text
+2
+```
+
+Supabase actualizó los datos:
+
+```text
+confirmacion_cliente = no_habra_nadie
+respuesta_cliente = 2
+```
+
+Ambos mensajes quedaron registrados en el historial.
+
+### 10.7 Finalización de la ruta
+
+**Resultado:** exitoso.
+
+La ruta utilizada para las pruebas pasó al estado:
+
+```text
+finalizada
+```
+
+El historial de mensajes se conservó.
+
+### 10.8 Limpieza de funciones temporales
+
+**Resultado:** completado.
+
+Se eliminaron las funciones SQL temporales utilizadas durante las pruebas de envío exclusivo.
+
+### 10.9 Mejoras de conexión
+
+**Resultado:** prueba de conexión exitosa.
+
+Se simplificaron los registros de conexión y se verificó que WhatsApp pudiera conectarse sin mostrar registros criptográficos sensibles durante esa prueba.
+
+La ausencia de dichos registros durante un envío posterior todavía no ha sido verificada.
+
+---
+
+## 11. Seguridad implementada
+
+### Autenticación
+
+Las credenciales de WhatsApp se almacenan localmente en la carpeta `auth/`.
+
+### Variables de entorno
+
+Las credenciales de Supabase se obtienen desde variables de entorno.
+
+### Validación de números
+
+Se normalizan y validan los números antes de utilizarlos para enviar mensajes.
+
+### Control de rutas
+
+El procesador verifica que la ruta se encuentre en estado `en_curso` antes de iniciar un envío.
+
+### Control de reintentos
+
+Los mensajes cuyo resultado de envío es incierto permanecen en estado `revision`, evitando reintentos automáticos potencialmente duplicados.
+
+### Registro de respuestas
+
+Los identificadores externos permiten detectar respuestas repetidas.
+
+### Registros de conexión
+
+Se redujo la información mostrada por la aplicación durante la conexión.
+
+**Pendiente:** verificar el origen de cualquier registro criptográfico que pueda aparecer durante futuros envíos.
+
+---
+
+## 12. Comandos de desarrollo
+
+### Instalar dependencias
+
+```powershell
+npm.cmd install
+```
+
+### Comprobar TypeScript
+
+```powershell
+npm.cmd run check
+```
+
+### Ejecutar la prueba de conexión y recepción
+
+```powershell
+npx.cmd tsx src/prueba-recepcion.ts
+```
+
+### Detener el proceso
+
+```text
+Ctrl + C
+```
+
+### Consideraciones
+
+Los scripts históricos de envío no deben ejecutarse indiscriminadamente.
+
+Algunos dependen de funciones temporales eliminadas o pueden enviar mensajes reales.
+
+Antes de realizar nuevas pruebas de envío se debe verificar el destinatario, la ruta y el estado de la cola.
+
+---
+
+## 13. Estado actual del proyecto
+
+| Componente | Estado |
+|---|---|
+| Configuración de Node.js y TypeScript | Completado |
+| Conexión con Supabase | Completado |
+| Autenticación de WhatsApp | Completado |
+| Envío mediante Baileys | Probado |
+| Cola local | Probada |
+| Cola persistente de Supabase | Probada |
+| Validación de rutas activas | Implementada |
+| Control de intentos | Implementado |
+| Prevención de reenvíos inciertos | Implementada |
+| Recepción automática | Probada |
+| Interpretación de respuestas | Probada con `1` y `2` |
+| Registro de respuestas | Probado |
+| Actualización de confirmación | Probada |
+| Historial de mensajes | Verificado |
+| Reconexión automática | Implementada; requiere pruebas adicionales |
+| Ciclo automático de producción | Pendiente de habilitación y validación |
+
+**Estado general:** las funcionalidades principales de envío y recepción están implementadas y han superado las pruebas controladas realizadas.
+
+El sistema todavía requiere validaciones adicionales antes de utilizarse con clientes reales de forma automática.
+
+---
+
+## 14. Próximas mejoras
+
+### 14.1 Validación de rutas finalizadas
+
+Revisar que las respuestas recibidas después de finalizar una ruta no modifiquen información histórica.
+
+### 14.2 Seguridad de registros
+
+Investigar los registros internos de Baileys que pueden mostrar información criptográfica durante determinados envíos.
+
+### 14.3 Manejo de mensajes en revisión
+
+Desarrollar un procedimiento de conciliación para mensajes que permanecen en estado `revision`.
+
+### 14.4 Validación de todas las respuestas
+
+Completar las pruebas controladas de la respuesta `3` y de mensajes no reconocidos.
+
+### 14.5 Reconexión
+
+Comprobar el comportamiento del bot ante desconexiones y reconexiones repetidas.
+
+### 14.6 Ciclo automático
+
+Validar el procesamiento continuo de la cola antes de habilitarlo para operaciones reales.
+
+### 14.7 Despliegue
+
+Preparar el bot para ejecutarse de manera estable en un entorno de servidor, incorporando supervisión del proceso, configuración segura y recuperación ante fallos.
+
+---
+
+## 15. Conclusión
+
+El proyecto evolucionó desde una conexión básica de WhatsApp y una cola local de pruebas hacia un sistema integrado con Supabase, capaz de enviar notificaciones de despacho, recibir respuestas y actualizar la información de los clientes.
+
+Las pruebas realizadas demostraron el funcionamiento de la comunicación entre WhatsApp, Baileys, TypeScript y PostgreSQL.
+
+Actualmente, el sistema cuenta con una base funcional para continuar desarrollando la automatización de despachos, priorizando la seguridad, la trazabilidad y la prevención de mensajes duplicados.
+
+El siguiente objetivo es reforzar las validaciones y preparar el procesamiento automático para su utilización en un entorno operativo.
