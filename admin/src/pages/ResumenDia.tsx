@@ -5,6 +5,8 @@ import type { RutaEnMapa } from '../components/MapaRutasDia'
 import { colorDeRuta } from '../lib/coloresRuta'
 import { supabase } from '../lib/supabase'
 import { hoyLocal } from '../lib/fechas'
+import { obtenerEntregas } from '../services/fotos'
+import type { EntregaDeParada } from '../services/fotos'
 import { listarRutasDelDia } from '../services/rutas'
 import type { Ruta } from '../types'
 
@@ -16,6 +18,9 @@ export default function ResumenDia() {
 
   const [seleccionada, setSeleccionada] = useState('')
   const [textoConductor, setTextoConductor] = useState('')
+  const [entregas, setEntregas] = useState<Record<string, EntregaDeParada>>({})
+  const [errorFotos, setErrorFotos] = useState<string | null>(null)
+  const [fotoGrande, setFotoGrande] = useState<string | null>(null)
   const [envivo, setEnvivo] = useState(false)
   const [actualizado, setActualizado] = useState<Date | null>(null)
 
@@ -72,6 +77,30 @@ export default function ResumenDia() {
       supabase.removeChannel(canal)
     }
   }, [fecha])
+
+  // Entregas y fotos de la ruta elegida. Se vuelve a pedir solo si cambian las paradas o su
+  // estado (no en cada recarga), para no regenerar los enlaces temporales sin necesidad.
+  const rutaElegida = rutas.find((r) => r.id === seleccionada) ?? rutas[0]
+  const claveParadas = (rutaElegida?.paradas ?? []).map((p) => `${p.id}:${p.estado}`).join('|')
+  useEffect(() => {
+    let activo = true
+    const ids = (rutaElegida?.paradas ?? []).map((p) => p.id)
+    obtenerEntregas(ids)
+      .then((e) => {
+        if (!activo) return
+        setEntregas(e)
+        setErrorFotos(null)
+      })
+      .catch((e: Error) => {
+        if (!activo) return
+        setEntregas({})
+        setErrorFotos(`No se pudieron cargar las fotos: ${e.message}`)
+      })
+    return () => {
+      activo = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveParadas])
 
   // Cada ruta del día tiene su color; el mismo en el mapa y en su tarjeta.
   const enMapa: RutaEnMapa[] = rutas.map((r, i) => ({
@@ -161,7 +190,7 @@ export default function ResumenDia() {
                     ) && <small className="error">Ningún conductor con ruta este día coincide.</small>}
                 </label>
               </div>
-              <table className="tabla">
+              <table className="tabla tabla-resumen">
                 <thead>
                   <tr>
                     <th>#</th>
@@ -169,12 +198,13 @@ export default function ResumenDia() {
                     <th>Cliente</th>
                     <th>Dirección</th>
                     <th>Estado</th>
+                    <th className="col-entrega">Entrega</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paradas.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="texto-suave">
+                      <td colSpan={6} className="texto-suave">
                         Esta ruta aún no tiene paradas.
                       </td>
                     </tr>
@@ -190,18 +220,64 @@ export default function ResumenDia() {
                         <td>
                           <EstadoBadge estado={p.estado} />
                         </td>
+                        <td className="col-entrega">
+                          {entregas[p.id]?.fotos.length ? (
+                            <div className="fotos-entrega">
+                              {entregas[p.id].fotos.map((f) => (
+                                <button
+                                  key={f.id}
+                                  type="button"
+                                  className="miniatura"
+                                  onClick={() => setFotoGrande(f.url)}
+                                  aria-label="Ver foto de la entrega"
+                                >
+                                  <img src={f.url} alt="Foto de la entrega" loading="lazy" />
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="texto-suave">
+                              {entregas[p.id] ? 'sin foto' : '—'}
+                            </span>
+                          )}
+                          {entregas[p.id]?.recibido_por && (
+                            <small className="texto-suave">
+                              Recibió: {entregas[p.id].recibido_por}
+                            </small>
+                          )}
+                          {entregas[p.id]?.comentario && (
+                            <small className="texto-suave">{entregas[p.id].comentario}</small>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
             </section>
+            {errorFotos && <p className="aviso">{errorFotos}</p>}
           </>
         )
       })()}
 
+      {fotoGrande && (
+        <div className="overlay" role="dialog" aria-modal="true" onClick={() => setFotoGrande(null)}>
+          <div className="dialogo dialogo-foto" onClick={(e) => e.stopPropagation()}>
+            <img src={fotoGrande} alt="Foto de la entrega" />
+            <div className="acciones acciones-fin">
+              <a className="btn" href={fotoGrande} target="_blank" rel="noreferrer">
+                Abrir en pestaña nueva
+              </a>
+              <button className="btn btn-primario" onClick={() => setFotoGrande(null)} autoFocus>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <p className="texto-suave">
-        Próximamente: fotos de las guías (4-17) y mapa en vivo de los conductores (4-20).
+        Próximamente: mapa en vivo de los conductores (4-20).
       </p>
     </div>
   )

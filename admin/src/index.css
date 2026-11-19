@@ -765,3 +765,86 @@ select[aria-invalid='true'] {
     animation: none;
   }
 }
+
+/* ---------- Fotos de entrega ---------- */
+.fotos-entrega {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.fotos-entrega + small,
+td > small.texto-suave {
+  display: block;
+}
+
+.miniatura {
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 6px;
+  background: none;
+  cursor: zoom-in;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.miniatura img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.dialogo-foto {
+  max-width: min(92vw, 720px);
+}
+
+.dialogo-foto img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto 0.8rem;
+  border-radius: 8px;
+}
+
+/* ---------- Ajustes del Resumen del día ---------- */
+.ruta .filtros {
+  margin: 0.9rem 0;
+}
+
+.ruta .filtros .campo {
+  width: min(100%, 340px);
+}
+
+.tabla-resumen th:first-child,
+.tabla-resumen td:first-child {
+  width: 3rem;
+  text-align: center;
+}
+
+.tabla-resumen td {
+  vertical-align: middle;
+}
+
+.tabla-resumen .col-entrega {
+  width: 9rem;
+  text-align: center;
+}
+
+.tabla-resumen .col-entrega small {
+  display: block;
+  max-width: 9rem;
+  margin: 0.2rem auto 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabla-resumen .fotos-entrega {
+  justify-content: center;
+}
+
+.tabla-resumen .miniatura img {
+  width: 44px;
+  height: 44px;
+}

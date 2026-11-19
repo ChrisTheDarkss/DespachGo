@@ -3,7 +3,7 @@
 Aplicación web para que el administrador cree órdenes, arme rutas y supervise el día. Está hecha con React, Vite, TypeScript y Leaflet, y se despliega en Vercel. Los datos viven en Supabase.
 
 **Responsable:** Persona 4. Respaldo: Persona 1.
-**Última actualización de este documento:** 19-11-2026 (resumen del día en vivo y con una sola tabla por conductor, colores por tramo y prioridad, OpenRouteService, botones de cancelar en rojo).
+**Última actualización de este documento:** 19-11-2026 (fotos de entrega, resumen del día en vivo y con una sola tabla por conductor, colores por tramo y prioridad, OpenRouteService, botones de cancelar en rojo).
 
 ---
 
@@ -112,7 +112,7 @@ Tecnologías: React 18, Vite 5, TypeScript, React Router 6, react-leaflet 4 (map
 
 **Armar ruta.** Se elige fecha de la ruta (no anterior a hoy) y conductor (solo activos). La lista muestra las órdenes pendientes ordenadas por fecha de entrega, con las atrasadas marcadas; las programadas para después de la fecha de la ruta quedan ocultas salvo que se active «Mostrar también las programadas». Las órdenes seleccionadas forman el orden de visita, que se ajusta con las flechas ↑↓. La casilla **Agrupar** junta las órdenes del mismo teléfono y dirección en una sola parada y muestra una vista previa de cuántas paradas resultan. **Optimizar** (mínimo 3 órdenes) pide el orden sugerido a una Edge Function; **Asignar** valida, abre un diálogo de confirmación con el resumen (avisa si hay órdenes con fecha posterior a la de la ruta) y recién entonces crea la ruta.
 
-**Resumen del día.** Se actualiza **en vivo**: escucha los cambios de `paradas` y `rutas` con Supabase Realtime y se recarga sola (indicador verde «En vivo»); si Realtime no está activado, recarga cada 30 segundos. Se elige el **conductor** en un campo con búsqueda (debajo del mapa: se escribe parte del nombre y se elige de la lista, o se selecciona solo si hay una única coincidencia) y se muestra **una sola tabla** con sus paradas (posición, guías, cliente, dirección y estado), el estado de la ruta, el conteo por estado y el mapa de su ruta, con cada tramo en un color distinto (`lib/coloresRuta.ts`; si dos rutas comparten calle, gana la de menor orden).
+**Resumen del día.** Se actualiza **en vivo**: escucha los cambios de `paradas` y `rutas` con Supabase Realtime y se recarga sola (indicador verde «En vivo»); si Realtime no está activado, recarga cada 30 segundos. Se elige el **conductor** en un campo con búsqueda (debajo del mapa: se escribe parte del nombre y se elige de la lista, o se selecciona solo si hay una única coincidencia) y se muestra **una sola tabla** con sus paradas (posición, guías, cliente, dirección, estado y **entrega**: miniaturas de las fotos que se abren en grande, quién recibió y el comentario), el estado de la ruta, el conteo por estado y el mapa de su ruta, con cada tramo en un color distinto (`lib/coloresRuta.ts`; si dos rutas comparten calle, gana la de menor orden).
 
 **Pendientes de resolver.** Reúne las órdenes fallidas, las de entrega parcial y las **pendientes con fecha de entrega vencida** (las atrasadas primero). Para fallidas y atrasadas: **Reprogramar** (elige nueva fecha, la orden queda pendiente) o **Cancelar** (con motivo). Las parciales solo se ven por ahora.
 
@@ -231,6 +231,8 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 | **10. Prioridad en calles compartidas** | El color de cada tramo depende de su orden de visita (el primer tramo siempre tiene el mismo color, el segundo otro, etc.). Cuando dos rutas pasan por la misma calle, se dibuja encima el tramo más prioritario (menor orden) y más delgado, y los de menor prioridad asoman por los bordes, más gruesos (`pesoDeTramo` y `ordenarPorPrioridad` en `lib/coloresRuta.ts`). Para que se vea limpio: 8 colores fijos y bien separados, grosor de 4 a 7 px, borde blanco en cada línea y puntas redondeadas; las líneas rectas (sin ruta por calles) se dibujan con puntos. |
 | **11. Resumen en vivo** | `ResumenDia` se suscribe a Realtime (`paradas` y `rutas`), junta los cambios seguidos en una sola recarga y, como respaldo, recarga cada 30 s. Muestra «En vivo» y la hora de la última actualización. Requiere activar Realtime en esas tablas (ver sección 10). |
 | **12. Una tabla por conductor** | `ResumenDia` pasó de una tarjeta por ruta a un selector de conductor y una única tabla con el mapa de la ruta elegida; el selector quedó debajo del mapa y se puede buscar escribiendo el nombre. |
+| **14. Ajuste visual del resumen** | Tabla del Resumen del día más ordenada: filas centradas en vertical, columna «#» y «Entrega» centradas con ancho fijo, miniaturas de 44 px, textos largos recortados con «…» y espacio entre el buscador de conductor y la tabla (`.tabla-resumen` en `index.css`). |
+| **13. Fotos de entrega (4-17)** | Nuevo `services/fotos.ts`: lee `entregas` (por `parada_id`) con sus `entrega_fotos` (columna `ruta_archivo`) y pide enlaces temporales de 1 hora al bucket privado `entregas`. `ResumenDia` agrega la columna «Entrega» con miniaturas, ampliación al hacer clic, «Recibió» y comentario; «sin foto» si la entrega no tiene. Si falla, solo se avisa y el resto del resumen sigue. |
 
 ### Estado de las tareas del plan
 
@@ -245,7 +247,7 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 | 4-13 y 4-14 Optimizar y ajustar el orden | Listo en el panel; depende de la Edge Function `optimizar_ruta` |
 | 4-15 Agrupar órdenes del mismo cliente | Listo (casilla en Armar ruta; la regla la aplica `asignar_ruta`) |
 | 4-16 Resumen del día | Versión base (rutas, paradas y estados) |
-| 4-17 Fotos de las guías | **Pendiente** |
+| 4-17 Fotos de las guías | Listo en el Resumen del día (falta probar con datos reales) |
 | 4-18 Pendientes de resolver | Fallidas, atrasadas: reprogramar y cancelar. Parciales: solo vista |
 | 4-19 Orden con saldo | **Pendiente** |
 | 4-20 Mapa en vivo de conductores | **Pendiente** |
@@ -254,6 +256,8 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 ---
 
 ## 10. Pendientes y puntos a vigilar
+
+- **Fotos de entrega.** `services/fotos.ts` lee `entrega_fotos.ruta_archivo` y firma esa ruta en el bucket `entregas`. El admin necesita una política de **Storage** que le permita leer (`select`) ese bucket; sin ella los enlaces temporales fallan y el resumen avisa. Falta probarlo con datos reales.
 
 - **Activar Realtime (Resumen en vivo).** Una sola vez, como migración nueva en `supabase/migrations/`:
   ```sql
@@ -293,6 +297,7 @@ Las etapas son las del registro de la sección 9. «Nuevo» indica que el archiv
 | `services/rutas.ts` | Conductores, asignar ruta y rutas del día. | Etapa 2: parámetros de `asignar_ruta`, `posicion_final` y conductores activos. Etapa 3: `p_agrupar`. |
 | `services/productos.ts`, `geocodificacion.ts` | Catálogo y geocodificación. | — |
 | `services/optimizacion.ts` | Optimización de ruta. | Etapa 7: usa ORS si hay `key_rutas`; si no, la Edge Function. |
+| `services/fotos.ts` | Entregas y fotos de una parada, con enlaces temporales. | **Nuevo** (etapa 13). |
 | `services/ors.ts` | Llamadas a OpenRouteService (direcciones y optimización). | **Nuevo** (etapa 7). |
 | `components/Layout.tsx` | Barra lateral y protección de rutas. | Etapa 6: confirmación al cerrar sesión. |
 | `components/Fondo.tsx` | Fondo animado decorativo. | **Nuevo** (etapa 5). |

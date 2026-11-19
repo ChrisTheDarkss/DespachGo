@@ -1,109 +1,81 @@
 import { supabase } from '../lib/supabase'
 
-// ───────────────────────────────────────────────────────────────────────────────
-// Fotos de entrega (tarea 4-17).
-//
-// Las fotos viven en la tabla `entrega_fotos` (varias por entrega) y los archivos en
-// un bucket PRIVADO de Storage, al que se accede con enlaces temporales.
-//
-// AJUSTAR SI NO COINCIDEN CON LA MIGRACIÓN 002 / EL STORAGE DE SUPABASE:
-//  - COLUMNAS_ARCHIVO: posibles nombres de la columna de `entrega_fotos` con la ruta
-//                      o URL del archivo (se usa la primera que exista).
-//  - BUCKETS_FOTOS:    bucket(s) de Storage donde se suben las fotos (se prueba en orden).
-// Si algo no coincide, el Resumen del día muestra el error con las columnas reales.
-// ───────────────────────────────────────────────────────────────────────────────
-const COLUMNAS_ARCHIVO = [
-  'ruta_archivo',
-  'storage_path',
-  'path',
-  'ruta',
-  'foto_path',
-  'foto_url',
-  'url',
-  'archivo',
-  'nombre_archivo',
-]
-const BUCKETS_FOTOS = ['fotos-entregas', 'fotos', 'entregas', 'fotos_entregas', 'entrega-fotos', 'guias']
+/** Bucket privado de Supabase Storage donde el conductor sube las fotos de entrega. */
+const BUCKET = 'entregas'
+/** Los enlaces temporales duran 1 hora (el bucket es privado). */
+const SEGUNDOS_ENLACE = 3600
 
-/** Los enlaces firmados caducan: la foto es privada y el enlace dura solo este tiempo. */
-const SEGUNDOS_VIGENCIA = 60 * 60
+export interface FotoEntrega {
+  id: string
+  url: string
+}
 
-/** parada_id → enlaces listos para mostrar (una parada puede tener varias entregas y fotos). */
-export type FotosPorParada = Record<string, string[]>
+export interface EntregaDeParada {
+  id: string
+  resultado: string
+  motivo: string | null
+  comentario: string | null
+  recibido_por: string | null
+  fotos: FotoEntrega[]
+}
 
-const esUrl = (v: string) => /^https?:\/\//i.test(v)
+type Fila = Record<string, unknown>
 
-/** Pide enlaces temporales probando los buckets posibles hasta que uno responda. */
-async function firmar(rutas: string[]): Promise<Map<string, string>> {
-  const errores: string[] = []
-  for (const bucket of BUCKETS_FOTOS) {
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .createSignedUrls(rutas, SEGUNDOS_VIGENCIA)
-    if (error) {
-      errores.push(`${bucket}: ${error.message}`)
-      continue
-    }
-    const mapa = new Map<string, string>()
-    for (const u of data ?? []) if (u.path && u.signedUrl) mapa.set(u.path, u.signedUrl)
-    if (mapa.size > 0) return mapa
-    errores.push(`${bucket}: no encontró los archivos`)
-  }
-  throw new Error(
-    `No se pudieron firmar las fotos (bucket distinto o falta permiso de lectura). ` +
-      `Ejemplo de ruta guardada: «${rutas[0]}». Intentos → ${errores.join(' | ')}. ` +
-      `Ajusta BUCKETS_FOTOS en src/services/fotos.ts.`,
-  )
+/**
+ * Ruta del archivo dentro del bucket (`entrega_fotos.ruta_archivo`). Si alguna vez guardan
+ * una URL completa, se queda con lo que va después del nombre del bucket.
+ */
+function rutaDelArchivo(foto: Fila): string | null {
+  const v = foto.ruta_archivo
+  if (typeof v !== 'string' || !v) return null
+  const i = v.indexOf(`/${BUCKET}/`)
+  return i >= 0 ? v.slice(i + BUCKET.length + 2).split('?')[0] : v
 }
 
 /**
- * Devuelve las fotos de entrega de las paradas indicadas.
- * Si el valor guardado es una URL se usa tal cual; si es una ruta dentro del bucket,
- * se pide un enlace temporal (URL firmada) a Storage.
+ * Entregas (con sus fotos) de un conjunto de paradas, indexadas por parada.
+ * Las fotos se piden con enlaces temporales firmados.
  */
-export async function fotosDeParadas(paradaIds: string[]): Promise<FotosPorParada> {
+export async function obtenerEntregas(
+  paradaIds: string[],
+): Promise<Record<string, EntregaDeParada>> {
   if (paradaIds.length === 0) return {}
-
   const { data, error } = await supabase
     .from('entregas')
-    .select('id, parada_id, entrega_fotos(*)')
+    .select('id, parada_id, resultado, motivo, comentario, recibido_por, entrega_fotos(*)')
     .in('parada_id', paradaIds)
   if (error) throw new Error(error.message)
 
-  type Fila = { parada_id: string; entrega_fotos: Record<string, unknown>[] | null }
-  const entregas = (data ?? []) as unknown as Fila[]
-
-  const fotos = entregas.flatMap((e) =>
-    (e.entrega_fotos ?? []).map((f) => ({ paradaId: e.parada_id, fila: f })),
+  const filas = (data ?? []) as unknown as (Fila & { entrega_fotos?: Fila[] })[]
+  const pedidas = filas.flatMap((e) =>
+    (e.entrega_fotos ?? []).flatMap((f) => {
+      const ruta = rutaDelArchivo(f)
+      return ruta ? [{ entrega: e, id: String(f.id), ruta }] : []
+    }),
   )
-  if (fotos.length === 0) return {}
 
-  // Detecta qué columna trae el archivo. Si ninguna existe, avisa con las columnas reales.
-  const columna = COLUMNAS_ARCHIVO.find((c) => c in fotos[0].fila)
-  if (!columna) {
-    throw new Error(
-      `La tabla «entrega_fotos» no tiene una columna de archivo conocida. ` +
-        `Columnas encontradas: ${Object.keys(fotos[0].fila).join(', ')}. ` +
-        `Ajusta COLUMNAS_ARCHIVO en src/services/fotos.ts.`,
-    )
+  // Una sola llamada para firmar todas las rutas.
+  const firmadas = new Map<string, string>()
+  if (pedidas.length > 0) {
+    const { data: urls } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUrls(pedidas.map((p) => p.ruta), SEGUNDOS_ENLACE)
+    for (const u of urls ?? []) if (u.signedUrl && !u.error) firmadas.set(u.path ?? '', u.signedUrl)
   }
 
-  const pendientes: { paradaId: string; valor: string }[] = []
-  for (const { paradaId, fila } of fotos) {
-    const valor = fila[columna]
-    if (typeof valor === 'string' && valor.trim()) {
-      pendientes.push({ paradaId, valor: valor.trim() })
+  const resultado: Record<string, EntregaDeParada> = {}
+  for (const e of filas) {
+    const fotos: FotoEntrega[] = pedidas
+      .filter((p) => p.entrega === e && firmadas.has(p.ruta))
+      .map((p) => ({ id: p.id, url: firmadas.get(p.ruta) as string }))
+    resultado[String(e.parada_id)] = {
+      id: String(e.id),
+      resultado: String(e.resultado),
+      motivo: (e.motivo as string | null) ?? null,
+      comentario: (e.comentario as string | null) ?? null,
+      recibido_por: (e.recibido_por as string | null) ?? null,
+      fotos,
     }
-  }
-
-  const porFirmar = [...new Set(pendientes.filter((p) => !esUrl(p.valor)).map((p) => p.valor))]
-  const firmadas = porFirmar.length > 0 ? await firmar(porFirmar) : new Map<string, string>()
-
-  const resultado: FotosPorParada = {}
-  for (const { paradaId, valor } of pendientes) {
-    const url = esUrl(valor) ? valor : firmadas.get(valor)
-    if (!url) continue
-    ;(resultado[paradaId] ??= []).push(url)
   }
   return resultado
 }
