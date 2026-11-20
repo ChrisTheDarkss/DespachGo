@@ -5,6 +5,7 @@ import type {
   RouteProductsSummary,
   RouteStopProducts,
 } from "@/src/types/routeProducts";
+import type { DriverRoute } from "@/src/types/route";
 
 type RouteOrderItemRow = {
   orden_id: string;
@@ -35,7 +36,6 @@ function addProductQuantity(
     });
   }
 }
-
 function throwIfError(error: { message: string } | null) {
   if (error) {
     throw new Error(error.message);
@@ -44,8 +44,12 @@ function throwIfError(error: { message: string } | null) {
 
 export async function getTodaysRouteProductsSummary(
   conductorId: string,
+  knownRoute?: DriverRoute | null,
 ): Promise<RouteProductsSummary> {
-  const route = await getTodaysDriverRoute(conductorId);
+  const route =
+    knownRoute === undefined
+      ? await getTodaysDriverRoute(conductorId)
+      : knownRoute;
   if (!route) {
     return { paradas: [], total_general: [] };
   }
@@ -143,11 +147,4 @@ export async function getTodaysRouteProductsSummary(
     })),
     total_general: [...totalGeneral.values()],
   };
-}
-
-export async function getTodaysRouteProductTotals(
-  conductorId: string,
-): Promise<RouteProductTotal[]> {
-  const summary = await getTodaysRouteProductsSummary(conductorId);
-  return summary.total_general;
 }

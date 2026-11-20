@@ -75,6 +75,8 @@ function isCachedStopOrder(value: unknown) {
       (item: unknown) =>
         isRecord(item) &&
         typeof item.id === "string" &&
+        (item.producto_id === undefined ||
+          typeof item.producto_id === "string") &&
         typeof item.producto === "string" &&
         typeof item.unidad === "string" &&
         typeof item.cantidad_pedida === "number" &&
@@ -122,6 +124,10 @@ function isStopDetail(value: unknown): value is StopDetail {
     typeof value.id === "string" &&
     typeof value.ruta_id === "string" &&
     typeof value.posicion === "number" &&
+    (value.total_paradas === undefined ||
+      (typeof value.total_paradas === "number" &&
+        Number.isInteger(value.total_paradas) &&
+        value.total_paradas > 0)) &&
     isStopStatus(value.estado) &&
     isCustomerConfirmation(value.confirmacion_cliente) &&
     isOmissionReason(value.motivo_omision) &&

@@ -1,9 +1,9 @@
 import { StyleSheet, Text, View } from "react-native";
 import type { RouteMapProps } from "@/src/components/RouteMap.types";
 
-export function RouteMap({ points }: RouteMapProps) {
+export function RouteMap({ points, compact = false }: RouteMapProps) {
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, compact && styles.compactContainer]}>
       <Text style={styles.title}>
         El mapa interactivo está disponible en la app móvil.
       </Text>
@@ -25,6 +25,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 10,
     padding: 18,
+  },
+  compactContainer: {
+    padding: 12,
   },
   title: {
     color: "#20342a",

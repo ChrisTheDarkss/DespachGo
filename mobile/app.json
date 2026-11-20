@@ -26,13 +26,15 @@
           "cameraPermission": "DespachGo necesita usar la cámara para fotografiar las guías de despacho.",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "android": {
-      "package": "cl.despachgo.mobile"
+      "package": "cl.despachgo.mobile",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "extra": {
       "router": {},

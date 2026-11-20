@@ -126,7 +126,7 @@ export function GuidePhotoField({
           style={styles.secondaryButton}
         >
           <Text style={styles.secondaryButtonText}>
-            {photoUri ? "Cambiar foto" : "Elegir foto"}
+            {photoUri ? "Cambiar" : "Elegir foto"}
           </Text>
         </Pressable>
         {photoUri ? (
@@ -166,8 +166,8 @@ const styles = StyleSheet.create({
   preview: {
     backgroundColor: "#e8ede9",
     borderRadius: 10,
-    height: 150,
-    width: 150,
+    height: 126,
+    width: "100%",
   },
   actions: {
     alignItems: "center",

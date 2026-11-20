@@ -152,6 +152,22 @@ export async function getQueuedGuidePhotoContents(
   return blob;
 }
 
+export async function getQueuedGuidePhotoPreviewUri(
+  photo: QueuedGuidePhoto,
+) {
+  const blob = await readPhoto(getPhotoKey(photo.uri));
+  if (!blob) {
+    throw new Error("No se encontró una foto pendiente en el dispositivo.");
+  }
+  return URL.createObjectURL(blob);
+}
+
+export function releaseQueuedGuidePhotoPreview(uri: string) {
+  if (uri.startsWith("blob:")) {
+    URL.revokeObjectURL(uri);
+  }
+}
+
 export async function removePersistedGuidePhotos(
   photos: QueuedGuidePhoto[],
 ) {

@@ -1,25 +1,24 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
-  Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/hooks/useAuth";
+import { useDeliveryOutbox } from "@/src/hooks/useDeliveryOutbox";
 import {
   getDriverStopDetails,
-  omitDriverStop,
   retryDriverStop,
 } from "@/src/services/driverRoute";
 import type {
-  OmissionReason,
+  CustomerConfirmation,
   StopDetail,
   StopStatus,
 } from "@/src/types/route";
@@ -33,12 +32,18 @@ const statusLabels: Record<StopStatus, string> = {
   omitida: "Omitida",
 };
 
-const omissionReasons: { value: OmissionReason; label: string }[] = [
-  { value: "calle_cerrada", label: "Calle cerrada" },
-  { value: "accidente", label: "Accidente" },
-  { value: "cliente_ausente", label: "Cliente ausente" },
-  { value: "otro", label: "Otro motivo" },
-];
+const confirmationLabels: Record<CustomerConfirmation, string> = {
+  confirmo: "✓ Visita confirmada",
+  no_habra_nadie: "Cliente no estará",
+  sin_respuesta: "Sin respuesta",
+  quiere_hablar: "Quiere hablar",
+  otro: "Respuesta recibida",
+};
+
+const contentTopInset = Platform.OS === "web" ? 48 : 8;
+const unitFormatter = new Intl.NumberFormat("es-CL", {
+  maximumFractionDigits: 2,
+});
 
 export default function StopDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -46,55 +51,53 @@ export default function StopDetailsScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const conductorId = session?.user.id;
+  const { queue: pendingDeliveries } = useDeliveryOutbox(conductorId);
   const [stop, setStop] = useState<StopDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isOmitting, setIsOmitting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isCalling, setIsCalling] = useState(false);
-  const [isOmissionModalVisible, setIsOmissionModalVisible] = useState(false);
-  const [omissionReason, setOmissionReason] = useState<OmissionReason | null>(
-    null,
-  );
-  const [omissionComment, setOmissionComment] = useState("");
+  const [areGuidesExpanded, setAreGuidesExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
 
-    async function loadStop() {
-      if (!stopId || !conductorId) {
-        setError("No se indicó qué parada consultar o no hay una sesión activa.");
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setError(null);
-      try {
-        const details = await getDriverStopDetails(stopId, conductorId);
-        if (isMounted) {
-          setStop(details);
-        }
-      } catch (loadError) {
-        if (isMounted) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "No se pudo cargar el detalle de la parada.",
-          );
-        }
-      } finally {
-        if (isMounted) {
+      async function loadStop() {
+        if (!stopId || !conductorId) {
+          setError("No se indicó qué parada consultar o no hay una sesión activa.");
           setIsLoading(false);
+          return;
+        }
+
+        setIsLoading(true);
+        setError(null);
+        try {
+          const details = await getDriverStopDetails(stopId, conductorId);
+          if (isMounted) {
+            setStop(details);
+          }
+        } catch (loadError) {
+          if (isMounted) {
+            setError(
+              loadError instanceof Error
+                ? loadError.message
+                : "No se pudo cargar el detalle de la parada.",
+            );
+          }
+        } finally {
+          if (isMounted) {
+            setIsLoading(false);
+          }
         }
       }
-    }
 
-    void loadStop();
-    return () => {
-      isMounted = false;
-    };
-  }, [conductorId, stopId]);
+      void loadStop();
+      return () => {
+        isMounted = false;
+      };
+    }, [conductorId, stopId]),
+  );
 
   async function handleCall() {
     const phone = stop?.ordenes[0]?.telefono;
@@ -115,36 +118,6 @@ export default function StopDetailsScreen() {
       );
     } finally {
       setIsCalling(false);
-    }
-  }
-
-  async function handleOmitStop() {
-    if (!stop || !omissionReason || isOmitting) {
-      return;
-    }
-    if (omissionReason === "otro" && !omissionComment.trim()) {
-      setError("Escribe un comentario para explicar el motivo.");
-      return;
-    }
-
-    setError(null);
-    setIsOmitting(true);
-    try {
-      await omitDriverStop(
-        stop.id,
-        omissionReason,
-        omissionComment.trim() || null,
-      );
-      setIsOmissionModalVisible(false);
-      router.back();
-    } catch (omitError) {
-      setError(
-        omitError instanceof Error
-          ? omitError.message
-          : "No se pudo omitir la parada.",
-      );
-    } finally {
-      setIsOmitting(false);
     }
   }
 
@@ -200,39 +173,77 @@ export default function StopDetailsScreen() {
   }
 
   const firstOrder = stop.ordenes[0];
+  const canOpenMap =
+    stop.estado !== "entregada" &&
+    stop.estado !== "parcial" &&
+    stop.estado !== "omitida";
+  const hasPendingDelivery = pendingDeliveries.some(
+    (action) => action.stopId === stop.id,
+  );
   const canOmit =
     !stop.offlineCopy &&
     stop.ruta_estado === "en_curso" &&
-    stop.estado === "pendiente";
+    stop.estado === "pendiente" &&
+    !hasPendingDelivery;
   const canRecordDelivery =
-    stop.ruta_estado === "en_curso" && stop.estado === "pendiente";
+    stop.ruta_estado === "en_curso" &&
+    stop.estado === "pendiente" &&
+    !hasPendingDelivery;
   const canRetry =
     !stop.offlineCopy &&
     stop.ruta_estado === "en_curso" &&
     stop.estado === "fallida_por_reintentar";
+  const notes = stop.ordenes
+    .map((order) => order.notas)
+    .filter((note): note is string => Boolean(note?.trim()));
+  const products = stop.ordenes.flatMap((order) =>
+    order.items.map((item) => ({ ...item, numero_guia: order.numero_guia })),
+  );
+  const totalUnits = products.reduce(
+    (total, product) => total + product.cantidad_pedida,
+    0,
+  );
+  const routeCode = `RUTA ${stop.ruta_id.slice(0, 8).toUpperCase()}`;
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Text style={styles.backText}>‹  Mi ruta</Text>
-        </Pressable>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.topBar}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Volver a mi ruta"
+            onPress={() => router.back()}
+            style={styles.backButton}
+          >
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
+          <Text style={styles.routeCode}>{routeCode}</Text>
+          <Text accessibilityLabel="Ayuda" style={styles.helpIcon}>?</Text>
+        </View>
 
         <View style={styles.heading}>
-          <Text style={styles.eyebrow}>PARADA {stop.posicion}</Text>
           <Text accessibilityRole="header" style={styles.title}>
-            {firstOrder?.cliente ?? "Detalle de parada"}
+            Detalle de la parada
           </Text>
-          <Text style={styles.status}>{statusLabels[stop.estado]}</Text>
+          <Text style={styles.subtitle}>
+            Parada {stop.posicion}
+            {stop.total_paradas ? ` de ${stop.total_paradas}` : ""} ·{" "}
+            {stop.ruta_estado === "en_curso" ? "Ruta en curso" : "Ruta asignada"}
+          </Text>
         </View>
 
         {stop.offlineCopy ? (
           <Text style={styles.offlineNotice}>
             Mostrando datos guardados. Las entregas se sincronizarán cuando vuelva la conexión.
+          </Text>
+        ) : null}
+        {hasPendingDelivery ? (
+          <Text style={styles.offlineNotice}>
+            Esta entrega está guardada y pendiente de sincronización. No la
+            registres otra vez.
           </Text>
         ) : null}
 
@@ -242,237 +253,275 @@ export default function StopDetailsScreen() {
           </Text>
         ) : null}
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Dirección</Text>
-          {stop.ordenes.map((order) => (
-            <View key={order.id} style={styles.guideAddress}>
-              <Text style={styles.address}>
-                {order.direccion}, {order.comuna}
-              </Text>
-              <Text style={styles.guideNumber}>
-                Guía {order.numero_guia}
-              </Text>
-            </View>
-          ))}
+        <View style={styles.customerCard}>
+          <View style={styles.badgesRow}>
+            <Text style={styles.pendingBadge}>
+              {statusLabels[stop.estado]}
+            </Text>
+            <Text
+              style={[
+                styles.confirmedBadge,
+                stop.confirmacion_cliente !== "confirmo" &&
+                  styles.confirmationPending,
+              ]}
+            >
+              {confirmationLabels[stop.confirmacion_cliente]}
+            </Text>
+          </View>
+          <Text style={styles.customerName}>
+            {firstOrder?.cliente ?? "Cliente"}
+          </Text>
+          {firstOrder ? (
+            <Text style={styles.customerMeta}>
+              Guía {firstOrder.numero_guia} · {firstOrder.cliente}
+            </Text>
+          ) : null}
+          {firstOrder ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canOpenMap }}
+              disabled={!canOpenMap}
+              onPress={() => {
+                if (canOpenMap) {
+                  router.push({
+                    pathname: "/(tabs)",
+                    params: { view: "mapa" },
+                  });
+                }
+              }}
+              style={({ pressed }) => [
+                styles.addressRow,
+                pressed && canOpenMap && styles.cardPressed,
+              ]}
+            >
+              <View style={styles.pinMarker}>
+                <View style={styles.pinMarkerCenter} />
+              </View>
+              <View style={styles.addressText}>
+                <Text style={styles.address}>
+                  {firstOrder.direccion}, {firstOrder.comuna}
+                </Text>
+                <Text style={styles.addressMeta}>
+                  {canOpenMap
+                    ? `${firstOrder.comuna} · Ver en el mapa`
+                    : firstOrder.comuna}
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             disabled={isCalling}
             onPress={() => void handleCall()}
             style={({ pressed }) => [
-              styles.callButton,
-              pressed && styles.callButtonPressed,
+              styles.callCard,
+              pressed && styles.cardPressed,
             ]}
           >
             {isCalling ? (
-              <ActivityIndicator color="#ffffff" />
+              <ActivityIndicator color="#176447" />
             ) : (
-              <Text style={styles.callButtonText}>Llamar al cliente</Text>
+              <>
+                <Text style={styles.callIcon}>☎</Text>
+                <View style={styles.callTextContainer}>
+                  <Text style={styles.callLabel}>Llamar al cliente</Text>
+                  <Text style={styles.callNumber}>{firstOrder?.telefono ?? "Teléfono no disponible"}</Text>
+                </View>
+                <Text style={styles.callArrow}>↗</Text>
+              </>
             )}
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.push("/map")}
-            style={({ pressed }) => [
-              styles.mapButton,
-              pressed && styles.mapButtonPressed,
-            ]}
-          >
-            <Text style={styles.mapButtonText}>Ver mapa de la ruta</Text>
           </Pressable>
         </View>
 
-        {stop.ordenes.map((order) => (
-          <View key={order.id} style={styles.card}>
-            <Text style={styles.sectionTitle}>
-              Guía {order.numero_guia}
-            </Text>
-            {order.notas ? (
-              <View style={styles.notes}>
-                <Text style={styles.noteLabel}>Notas</Text>
-                <Text style={styles.bodyText}>{order.notas}</Text>
-              </View>
-            ) : null}
-            <Text style={styles.subsectionTitle}>Productos</Text>
-            {order.items.length > 0 ? (
-              order.items.map((item) => (
-                <View key={item.id} style={styles.productRow}>
-                  <Text style={styles.productName}>{item.producto}</Text>
-                  <Text style={styles.quantity}>
-                    {item.cantidad_pedida} {item.unidad}
-                  </Text>
-                </View>
-              ))
-            ) : (
-              <Text style={styles.secondaryText}>
-                Esta guía no tiene productos registrados.
+        {notes.length > 0 ? (
+          <View style={styles.notesCard}>
+            <Text style={styles.notesTitle}>▣  Notas para la entrega</Text>
+            {notes.map((note, index) => (
+              <Text key={`${note}-${index}`} style={styles.notesText}>
+                {note}
               </Text>
-            )}
+            ))}
           </View>
-        ))}
+        ) : (
+          <View style={styles.notesCard}>
+            <Text style={styles.notesTitle}>▣  Notas para la entrega</Text>
+            <Text style={styles.notesText}>
+              No hay indicaciones adicionales para esta entrega.
+            </Text>
+          </View>
+        )}
 
-        {canRecordDelivery ? (
+        <View style={styles.productsHeading}>
+          <Text style={styles.sectionTitle}>Productos</Text>
+          <Text style={styles.productCount}>
+            {unitFormatter.format(totalUnits)}{" "}
+            {totalUnits === 1 ? "unidad" : "unidades"}
+          </Text>
+        </View>
+        {stop.ordenes.length === 1 ? (
+          <Text style={styles.guideCategoryTitle}>
+            Guía de despacho N.º {stop.ordenes[0].numero_guia}
+          </Text>
+        ) : null}
+        {products.length > 0 ? (
+          <View style={styles.productsCard}>
+            {products.map((item) => (
+              <View key={item.id} style={styles.productRow}>
+                <View style={styles.productIcon}>
+                  <Text style={styles.productIconText}>⬡</Text>
+                </View>
+                <View style={styles.productDetails}>
+                  <Text style={styles.productName}>{item.producto}</Text>
+                  <Text style={styles.productGuide}>Guía {item.numero_guia}</Text>
+                </View>
+                <Text style={styles.quantity}>
+                  {item.cantidad_pedida} {item.unidad}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.productsCard}>
+            <Text style={styles.secondaryText}>
+              Esta parada no tiene productos registrados.
+            </Text>
+          </View>
+        )}
+
+        {stop.ordenes.length >= 2 ? (
           <>
             <Pressable
               accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: "/delivery/[stopId]",
-                  params: { stopId: stop.id },
-                })
-              }
+              accessibilityState={{ expanded: areGuidesExpanded }}
+              onPress={() => setAreGuidesExpanded((expanded) => !expanded)}
               style={({ pressed }) => [
-                styles.deliveryButton,
-                pressed && styles.callButtonPressed,
+                styles.guideSummary,
+                pressed && styles.cardPressed,
               ]}
             >
-              <Text style={styles.callButtonText}>Registrar entrega</Text>
+              <Text style={styles.guideIcon}>▤</Text>
+              <View style={styles.guideDetails}>
+                <Text style={styles.guideTitle}>Ver Guías de despacho</Text>
+                <Text style={styles.guideMeta}>
+                  {stop.ordenes.length} Guías · Productos por guía
+                </Text>
+              </View>
+              <Text style={styles.guideChevron}>
+                {areGuidesExpanded ? "⌃" : "›"}
+              </Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: "/delivery/failed/[stopId]",
-                  params: { stopId: stop.id },
-                })
-              }
-              style={({ pressed }) => [
-                styles.failedButton,
-                pressed && styles.mapButtonPressed,
-              ]}
-            >
-              <Text style={styles.failedButtonText}>Reportar entrega fallida</Text>
-            </Pressable>
+            {areGuidesExpanded ? (
+              <View style={styles.guideList}>
+                <Text style={styles.guideListTitle}>Detalle por guía</Text>
+                {stop.ordenes.map((order) => (
+                  <View key={order.id} style={styles.guideCard}>
+                    <View style={styles.guideCardHeader}>
+                      <Text style={styles.guideCardTitle}>
+                        Guía de despacho N.º {order.numero_guia}
+                      </Text>
+                      <Text style={styles.guideCardCount}>
+                        {order.items.length}{" "}
+                        {order.items.length === 1 ? "producto" : "productos"}
+                      </Text>
+                    </View>
+                    {order.items.map((item) => (
+                      <View key={item.id} style={styles.guideProductRow}>
+                        <Text style={styles.guideProductName}>
+                          {item.producto}
+                        </Text>
+                        <Text style={styles.guideProductQuantity}>
+                          {unitFormatter.format(item.cantidad_pedida)}{" "}
+                          {item.unidad}
+                        </Text>
+                      </View>
+                    ))}
+                    {order.items.length === 0 ? (
+                      <Text style={styles.guideMeta}>
+                        Esta guía no tiene productos registrados.
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </>
-        ) : null}
-
-        {canRetry ? (
-          <Pressable
-            accessibilityRole="button"
-            disabled={isRetrying}
-            onPress={() => void handleRetryStop()}
-            style={({ pressed }) => [
-              styles.deliveryButton,
-              pressed && styles.callButtonPressed,
-              isRetrying && styles.disabledButton,
-            ]}
-          >
-            {isRetrying ? (
-              <ActivityIndicator color="#ffffff" />
-            ) : (
-              <Text style={styles.callButtonText}>Reintentar parada</Text>
-            )}
-          </Pressable>
-        ) : null}
-
-        {canOmit ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setError(null);
-              setOmissionReason(null);
-              setOmissionComment("");
-              setIsOmissionModalVisible(true);
-            }}
-            style={({ pressed }) => [
-              styles.omitButton,
-              pressed && styles.omitButtonPressed,
-            ]}
-          >
-            <Text style={styles.omitButtonText}>Omitir parada</Text>
-          </Pressable>
         ) : null}
       </ScrollView>
 
-      <Modal
-        animationType="slide"
-        onRequestClose={() => setIsOmissionModalVisible(false)}
-        transparent
-        visible={isOmissionModalVisible}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text accessibilityRole="header" style={styles.modalTitle}>
-              Motivo para omitir
+      {stop.ruta_estado === "en_curso" &&
+      (stop.estado === "pendiente" || canRetry) ? (
+        <View style={styles.footer}>
+          {error ? (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {error}
             </Text>
-            <Text style={styles.secondaryText}>
-              Selecciona por qué no se realizará esta entrega.
-            </Text>
-            {omissionReasons.map((reason) => (
-              <Pressable
-                accessibilityRole="radio"
-                accessibilityState={{
-                  checked: omissionReason === reason.value,
-                }}
-                key={reason.value}
-                onPress={() => {
-                  setOmissionReason(reason.value);
-                  setError(null);
-                }}
-                style={[
-                  styles.reasonOption,
-                  omissionReason === reason.value && styles.reasonSelected,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.reasonText,
-                    omissionReason === reason.value && styles.reasonTextSelected,
-                  ]}
-                >
-                  {reason.label}
-                </Text>
-              </Pressable>
-            ))}
-            {omissionReason === "otro" ? (
-              <TextInput
-                accessibilityLabel="Comentario del motivo"
-                multiline
-                onChangeText={setOmissionComment}
-                placeholder="Describe el motivo"
-                style={styles.commentInput}
-                value={omissionComment}
-              />
-            ) : null}
-            {error ? (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {error}
-              </Text>
-            ) : null}
-            <View style={styles.modalActions}>
+          ) : null}
+          {stop.estado === "pendiente" ? (
+            <>
               <Pressable
                 accessibilityRole="button"
-                disabled={isOmitting}
-                onPress={() => setIsOmissionModalVisible(false)}
-                style={styles.cancelButton}
+                accessibilityState={{ disabled: !canRecordDelivery }}
+                disabled={!canRecordDelivery}
+                onPress={() =>
+                  router.push({
+                    pathname: "/delivery/[stopId]",
+                    params: { stopId: stop.id },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.footerPrimary,
+                  pressed && styles.footerPrimaryPressed,
+                  !canRecordDelivery && styles.disabledButton,
+                ]}
               >
-                <Text style={styles.cancelText}>Cancelar</Text>
+                <Text style={styles.footerPrimaryText}>Registrar entrega</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                disabled={isOmitting || !omissionReason}
-                onPress={() => void handleOmitStop()}
-                style={[
-                  styles.confirmButton,
-                  (isOmitting || !omissionReason) && styles.disabledButton,
+                accessibilityState={{ disabled: !canOmit }}
+                disabled={!canOmit}
+                onPress={() =>
+                  router.push({
+                    pathname: "/stop/omit/[id]",
+                    params: { id: stop.id },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.footerSecondary,
+                  pressed && styles.footerSecondaryPressed,
+                  !canOmit && styles.disabledButton,
                 ]}
               >
-                {isOmitting ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={styles.confirmText}>Confirmar omisión</Text>
-                )}
+                <Text style={styles.footerSecondaryText}>Omitir parada</Text>
               </Pressable>
-            </View>
-          </View>
+            </>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              disabled={isRetrying}
+              onPress={() => void handleRetryStop()}
+              style={({ pressed }) => [
+                styles.footerPrimary,
+                pressed && styles.footerPrimaryPressed,
+                isRetrying && styles.disabledButton,
+              ]}
+            >
+              {isRetrying ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.footerPrimaryText}>Reintentar parada</Text>
+              )}
+            </Pressable>
+          )}
         </View>
-      </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#f5f7f5",
+    backgroundColor: "#f3f6f3",
     flex: 1,
   },
   loading: {
@@ -484,177 +533,407 @@ const styles = StyleSheet.create({
   },
   content: {
     gap: 14,
-    padding: 20,
-    paddingBottom: 36,
+    paddingHorizontal: 20,
+    paddingTop: contentTopInset,
+    paddingBottom: 20,
+  },
+  topBar: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 34,
   },
   backButton: {
-    alignSelf: "flex-start",
-    minHeight: 40,
+    alignItems: "flex-start",
     justifyContent: "center",
+    width: 42,
   },
   backText: {
-    color: "#176447",
-    fontSize: 16,
+    color: "#20342a",
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  routeCode: {
+    color: "#52645a",
+    fontSize: 10,
     fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  helpIcon: {
+    alignItems: "center",
+    borderColor: "#52645a",
+    borderRadius: 9,
+    borderWidth: 1,
+    color: "#52645a",
+    fontSize: 11,
+    height: 18,
+    justifyContent: "center",
+    overflow: "hidden",
+    textAlign: "center",
+    width: 18,
   },
   heading: {
-    gap: 7,
-    marginBottom: 2,
-  },
-  eyebrow: {
-    color: "#bd641f",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1,
+    gap: 5,
+    marginBottom: 8,
   },
   title: {
     color: "#20342a",
-    fontSize: 25,
+    fontSize: 24,
+    fontWeight: "800",
+  },
+  subtitle: {
+    color: "#52645a",
+    fontSize: 12,
+  },
+  customerCard: {
+    backgroundColor: "#ffffff",
+    borderColor: "#dce5df",
+    borderRadius: 10,
+    borderWidth: 1,
+    elevation: 2,
+    gap: 15,
+    marginTop: 4,
+    padding: 22,
+    shadowColor: "#20342a",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+  },
+  badgesRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  pendingBadge: {
+    backgroundColor: "#fff2e6",
+    borderRadius: 5,
+    color: "#a84f14",
+    fontSize: 10,
+    overflow: "hidden",
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  confirmedBadge: {
+    backgroundColor: "#e8f4ed",
+    borderRadius: 5,
+    color: "#176447",
+    fontSize: 10,
+    overflow: "hidden",
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  confirmationPending: {
+    backgroundColor: "#f0f2f0",
+    color: "#52645a",
+  },
+  customerName: {
+    color: "#20342a",
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  customerMeta: {
+    color: "#52645a",
+    fontSize: 11,
+  },
+  callCard: {
+    alignItems: "center",
+    backgroundColor: "#e5f1ea",
+    borderRadius: 7,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 58,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  cardPressed: {
+    opacity: 0.75,
+  },
+  callIcon: {
+    color: "#176447",
+    fontSize: 14,
+  },
+  callTextContainer: {
+    flex: 1,
+    gap: 2,
+  },
+  callLabel: {
+    color: "#176447",
+    fontSize: 11,
     fontWeight: "700",
   },
-  status: {
-    color: "#bd641f",
-    fontSize: 14,
+  callNumber: {
+    color: "#68766d",
+    fontSize: 10,
+  },
+  callArrow: {
+    color: "#176447",
+    fontSize: 13,
+  },
+  addressRow: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 50,
+    paddingVertical: 6,
+  },
+  pinMarker: {
+    alignItems: "center",
+    borderColor: "#e0673d",
+    borderRadius: 8,
+    borderBottomRightRadius: 2,
+    borderWidth: 1.5,
+    height: 11,
+    justifyContent: "center",
+    marginRight: 2,
+    marginTop: 1,
+    transform: [{ rotate: "45deg" }],
+    width: 11,
+  },
+  pinMarkerCenter: {
+    backgroundColor: "#e0673d",
+    borderRadius: 2,
+    height: 3,
+    width: 3,
+  },
+  addressText: {
+    flex: 1,
+    gap: 3,
+  },
+  address: {
+    color: "#35473c",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  addressMeta: {
+    color: "#68766d",
+    fontSize: 10,
+  },
+  notesCard: {
+    backgroundColor: "#e7f2eb",
+    borderLeftColor: "#80c59c",
+    borderLeftWidth: 2,
+    borderRadius: 7,
+    gap: 6,
+    minHeight: 92,
+    padding: 14,
+  },
+  notesTitle: {
+    color: "#176447",
+    fontSize: 11,
     fontWeight: "700",
+  },
+  notesText: {
+    color: "#52645a",
+    fontSize: 10,
+    lineHeight: 14,
   },
   offlineNotice: {
     backgroundColor: "#fff0e3",
     borderRadius: 9,
     color: "#8c4a1b",
-    fontSize: 14,
-    lineHeight: 20,
-    padding: 12,
+    fontSize: 11,
+    lineHeight: 16,
+    padding: 10,
   },
-  card: {
-    backgroundColor: "#ffffff",
-    borderColor: "#e0e5e1",
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 12,
-    padding: 16,
+  secondaryText: {
+    color: "#68766d",
+    fontSize: 11,
+  },
+  error: {
+    color: "#a12622",
+    fontSize: 11,
   },
   sectionTitle: {
     color: "#20342a",
-    fontSize: 17,
-    fontWeight: "700",
-  },
-  guideAddress: {
-    borderBottomColor: "#edf0ed",
-    borderBottomWidth: 1,
-    gap: 4,
-    paddingBottom: 9,
-  },
-  address: {
-    color: "#35473c",
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  guideNumber: {
-    color: "#78847d",
     fontSize: 13,
+    fontWeight: "800",
   },
-  callButton: {
-    alignItems: "center",
-    backgroundColor: "#176447",
-    borderRadius: 9,
-    justifyContent: "center",
-    minHeight: 48,
-  },
-  deliveryButton: {
-    alignItems: "center",
-    backgroundColor: "#176447",
-    borderRadius: 10,
-    justifyContent: "center",
-    minHeight: 50,
-    padding: 14,
-  },
-  failedButton: {
-    alignItems: "center",
-    backgroundColor: "#fff0e3",
-    borderColor: "#f0d7c0",
-    borderRadius: 10,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 48,
-    padding: 12,
-  },
-  failedButtonText: {
-    color: "#a84f14",
-    fontSize: 15,
+  guideCategoryTitle: {
+    color: "#68766d",
+    fontSize: 12,
     fontWeight: "700",
   },
-  callButtonPressed: {
-    backgroundColor: "#104b35",
-  },
-  callButtonText: {
-    color: "#ffffff",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  mapButton: {
+  productsHeading: {
     alignItems: "center",
-    borderColor: "#bd641f",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  productCount: {
+    color: "#68766d",
+    fontSize: 10,
+  },
+  productsCard: {
+    backgroundColor: "#ffffff",
+    borderColor: "#dce5df",
     borderRadius: 9,
     borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 46,
-  },
-  mapButtonPressed: {
-    backgroundColor: "#fff0e3",
-  },
-  mapButtonText: {
-    color: "#a84f14",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  notes: {
-    backgroundColor: "#fff5eb",
-    borderRadius: 8,
-    gap: 5,
-    padding: 11,
-  },
-  noteLabel: {
-    color: "#a84f14",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  bodyText: {
-    color: "#35473c",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  subsectionTitle: {
-    color: "#52645a",
-    fontSize: 14,
-    fontWeight: "700",
-    marginTop: 2,
+    elevation: 2,
+    overflow: "hidden",
+    shadowColor: "#20342a",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
   productRow: {
     alignItems: "center",
-    borderTopColor: "#edf0ed",
-    borderTopWidth: 1,
+    borderBottomColor: "#edf0ed",
+    borderBottomWidth: 1,
     flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
-    paddingTop: 10,
+    gap: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 9,
+  },
+  productIcon: {
+    alignItems: "center",
+    backgroundColor: "#edf7f1",
+    borderRadius: 6,
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  productIconText: {
+    color: "#176447",
+    fontSize: 14,
+  },
+  productDetails: {
+    flex: 1,
+    gap: 2,
   },
   productName: {
     color: "#35473c",
     flex: 1,
-    fontSize: 14,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  productGuide: {
+    color: "#68766d",
+    fontSize: 9,
   },
   quantity: {
     color: "#20342a",
-    fontSize: 14,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  guideSummary: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#dce5df",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 42,
+    padding: 12,
+  },
+  guideIcon: {
+    color: "#176447",
+    fontSize: 13,
+  },
+  guideDetails: {
+    flex: 1,
+    gap: 3,
+  },
+  guideTitle: {
+    color: "#20342a",
+    fontSize: 11,
     fontWeight: "700",
   },
-  secondaryText: {
+  guideMeta: {
     color: "#68766d",
-    fontSize: 14,
+    fontSize: 9,
   },
-  error: {
-    color: "#a12622",
-    fontSize: 14,
+  guideChevron: {
+    color: "#52645a",
+    fontSize: 18,
+  },
+  guideList: {
+    gap: 8,
+  },
+  guideListTitle: {
+    color: "#20342a",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  guideCard: {
+    backgroundColor: "#ffffff",
+    borderColor: "#dce5df",
+    borderRadius: 9,
+    borderWidth: 1,
+    gap: 7,
+    padding: 11,
+  },
+  guideCardHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  guideCardTitle: {
+    color: "#20342a",
+    flex: 1,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  guideCardCount: {
+    color: "#68766d",
+    fontSize: 9,
+  },
+  guideProductRow: {
+    alignItems: "center",
+    borderTopColor: "#edf0ed",
+    borderTopWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingTop: 6,
+  },
+  guideProductName: {
+    color: "#35473c",
+    flex: 1,
+    fontSize: 10,
+  },
+  guideProductQuantity: {
+    color: "#20342a",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  footer: {
+    backgroundColor: "#ffffff",
+    borderTopColor: "#e3e8e4",
+    borderTopWidth: 1,
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingTop: 9,
+    paddingBottom: 8,
+  },
+  footerPrimary: {
+    alignItems: "center",
+    backgroundColor: "#176447",
+    borderRadius: 20,
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  footerPrimaryPressed: {
+    backgroundColor: "#104b35",
+  },
+  footerPrimaryText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  footerSecondary: {
+    alignItems: "center",
+    borderColor: "#d95f35",
+    borderRadius: 20,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 36,
+  },
+  footerSecondaryPressed: {
+    backgroundColor: "#fff4ee",
+  },
+  footerSecondaryText: {
+    color: "#c85831",
+    fontSize: 10,
+    fontWeight: "600",
   },
   secondaryButton: {
     alignItems: "center",
@@ -667,105 +946,10 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: "#176447",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  omitButton: {
-    alignItems: "center",
-    borderColor: "#bd641f",
-    borderRadius: 9,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 50,
-  },
-  omitButtonPressed: {
-    backgroundColor: "#fff0e3",
-  },
-  omitButtonText: {
-    color: "#a84f14",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  modalBackdrop: {
-    backgroundColor: "rgba(14, 30, 21, 0.55)",
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  modalCard: {
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    gap: 12,
-    padding: 22,
-    paddingBottom: 32,
-  },
-  modalTitle: {
-    color: "#20342a",
-    fontSize: 20,
-    fontWeight: "700",
-  },
-  reasonOption: {
-    borderColor: "#d8dfda",
-    borderRadius: 9,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 46,
-    paddingHorizontal: 13,
-  },
-  reasonSelected: {
-    backgroundColor: "#e5f1ea",
-    borderColor: "#176447",
-  },
-  reasonText: {
-    color: "#35473c",
-    fontSize: 14,
-  },
-  reasonTextSelected: {
-    color: "#176447",
-    fontWeight: "700",
-  },
-  commentInput: {
-    borderColor: "#d8dfda",
-    borderRadius: 9,
-    borderWidth: 1,
-    color: "#20342a",
-    minHeight: 76,
-    padding: 12,
-    textAlignVertical: "top",
-  },
-  modalActions: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 4,
-  },
-  cancelButton: {
-    alignItems: "center",
-    borderColor: "#d8dfda",
-    borderRadius: 9,
-    borderWidth: 1,
-    flex: 1,
-    justifyContent: "center",
-    minHeight: 48,
-  },
-  cancelText: {
-    color: "#52645a",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  confirmButton: {
-    alignItems: "center",
-    backgroundColor: "#bd641f",
-    borderRadius: 9,
-    flex: 1.4,
-    justifyContent: "center",
-    minHeight: 48,
-  },
-  confirmText: {
-    color: "#ffffff",
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: "700",
   },
   disabledButton: {
-    opacity: 0.5,
+    opacity: 0.88,
   },
 });

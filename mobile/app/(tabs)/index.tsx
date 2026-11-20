@@ -1,27 +1,68 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import type { ComponentRef } from "react";
+import type { GestureResponderEvent } from "react-native";
+import {
+  useFocusEffect,
+  useLocalSearchParams,
+  useRouter,
+} from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { RouteProductsSummary } from "@/src/components/RouteProductsSummary";
+import { ActiveRouteMap } from "@/src/components/ActiveRouteMap";
+import { RouteLoadChecklist } from "@/src/components/RouteLoadChecklist";
 import { StopCard } from "@/src/components/StopCard";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useDeliveryOutbox } from "@/src/hooks/useDeliveryOutbox";
 import { useGpsTracking } from "@/src/hooks/useGpsTracking";
 import {
+  confirmRouteLoad,
+  getConfirmedRouteLoad,
+} from "@/src/services/driverLoad";
+import {
   getTodaysDriverRoute,
   reorderDriverStops,
 } from "@/src/services/driverRoute";
-import type { DriverRoute } from "@/src/types/route";
+import { getTodaysRouteProductsSummary } from "@/src/services/routeProducts";
+import type { DriverRoute, RouteStop } from "@/src/types/route";
+import type { RouteProductsSummary } from "@/src/types/routeProducts";
+
+type RouteView = "lista" | "carga" | "mapa";
+type StopListFilter = "no_entregados" | "entregados" | "todos";
+
+const stopListFilters: { id: StopListFilter; label: string }[] = [
+  { id: "no_entregados", label: "No entregados" },
+  { id: "entregados", label: "Entregados" },
+  { id: "todos", label: "Todos" },
+];
+
+function isCompletedStop(stop: RouteStop) {
+  return (
+    stop.estado === "entregada" ||
+    stop.estado === "parcial" ||
+    stop.estado === "omitida"
+  );
+}
+
+function getAvailableRouteViews(route: DriverRoute | null): RouteView[] {
+  if (!route) {
+    return [];
+  }
+  return route.estado === "asignada"
+    ? ["lista", "carga", "mapa"]
+    : ["lista", "mapa"];
+}
 
 export default function TodayRouteScreen() {
+  const { view } = useLocalSearchParams<{ view?: string }>();
   const { session, signOut } = useAuth();
   const router = useRouter();
   const conductorId = session?.user.id;
@@ -35,24 +76,60 @@ export default function TodayRouteScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isReordering, setIsReordering] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [selectedRouteView, setSelectedRouteView] = useState<
-    "lista" | "carga"
-  >("lista");
+  const [isConfirmingLoad, setIsConfirmingLoad] = useState(false);
+  const [selectedRouteView, setSelectedRouteView] =
+    useState<RouteView>("lista");
+  const [selectedStopFilter, setSelectedStopFilter] =
+    useState<StopListFilter>("no_entregados");
+  const [isStopFilterOpen, setIsStopFilterOpen] = useState(false);
+  const stopFilterAnchorRef = useRef<ComponentRef<typeof View>>(null);
+  const [stopFilterPosition, setStopFilterPosition] = useState({
+    left: 0,
+    top: 0,
+  });
+  const [routeProducts, setRouteProducts] =
+    useState<RouteProductsSummary | null>(null);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+  const [productsError, setProductsError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedLoadProductIds, setSelectedLoadProductIds] = useState<
+    string[]
+  >([]);
+  const [isLoadConfirmed, setIsLoadConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const previousRouteState = useRef<DriverRoute["estado"] | null>(null);
+  const previousQueuedStopIds = useRef<string | null>(null);
+  const routeSwipeStart = useRef<{ pageX: number; pageY: number } | null>(null);
+  const excludeRouteSwipe = useRef(false);
   const { state: gpsState, error: gpsError } = useGpsTracking(
     conductorId,
     route?.id,
   );
 
+  function toggleStopFilter() {
+    if (isStopFilterOpen) {
+      setIsStopFilterOpen(false);
+      return;
+    }
+
+    stopFilterAnchorRef.current?.measureInWindow((left, top, _width, height) => {
+      setStopFilterPosition({ left, top: top + height + 6 });
+      setIsStopFilterOpen(true);
+    });
+  }
+
   const loadRoute = useCallback(
     async (refresh = false) => {
       if (!conductorId) {
         setRoute(null);
+        setRouteProducts(null);
+        setIsLoadingProducts(false);
         setIsLoading(false);
         return;
       }
 
       setError(null);
+      setLoadError(null);
       if (refresh) {
         setIsRefreshing(true);
       } else {
@@ -60,7 +137,62 @@ export default function TodayRouteScreen() {
       }
 
       try {
-        setRoute(await getTodaysDriverRoute(conductorId));
+        const currentRoute = await getTodaysDriverRoute(conductorId);
+        setRoute(currentRoute);
+        if (!currentRoute) {
+          previousRouteState.current = null;
+          setRouteProducts(null);
+          setIsLoadingProducts(false);
+          setSelectedLoadProductIds([]);
+          setIsLoadConfirmed(false);
+          return;
+        }
+        if (
+          currentRoute.estado === "en_curso" &&
+          previousRouteState.current !== "en_curso"
+        ) {
+          setSelectedRouteView("mapa");
+        } else if (
+          currentRoute.estado === "asignada" &&
+          view !== "mapa"
+        ) {
+          setSelectedRouteView("lista");
+        }
+        previousRouteState.current = currentRoute.estado;
+        setIsLoadingProducts(true);
+        setProductsError(null);
+        try {
+          const [summary, confirmedLoad] = await Promise.all([
+            getTodaysRouteProductsSummary(conductorId, currentRoute),
+            currentRoute.estado === "asignada"
+              ? getConfirmedRouteLoad(conductorId, currentRoute.id)
+              : Promise.resolve(null),
+          ]);
+          setRouteProducts(summary);
+          const availableProductIds = new Set(
+            summary.total_general.map(({ producto_id }) => producto_id),
+          );
+          const confirmedProductIds =
+            confirmedLoad?.products
+              .map(({ producto_id }) => producto_id)
+              .filter((productId) => availableProductIds.has(productId)) ?? [];
+          setSelectedLoadProductIds(confirmedProductIds);
+          setIsLoadConfirmed(
+            confirmedLoad !== null &&
+              confirmedProductIds.length === confirmedLoad.products.length,
+          );
+        } catch (productsLoadError) {
+          setRouteProducts(null);
+          setSelectedLoadProductIds([]);
+          setIsLoadConfirmed(false);
+          setProductsError(
+            productsLoadError instanceof Error
+              ? productsLoadError.message
+              : "No se pudieron cargar los productos de la ruta.",
+          );
+        } finally {
+          setIsLoadingProducts(false);
+        }
       } catch (loadError) {
         setError(
           loadError instanceof Error
@@ -72,7 +204,7 @@ export default function TodayRouteScreen() {
         setIsRefreshing(false);
       }
     },
-    [conductorId],
+    [conductorId, view],
   );
 
   useFocusEffect(
@@ -81,8 +213,75 @@ export default function TodayRouteScreen() {
     }, [loadRoute]),
   );
 
+  useEffect(() => {
+    if (view === "mapa") {
+      setSelectedRouteView("mapa");
+    }
+  }, [view]);
+
+  const pendingStopIdSignature = pendingDeliveries
+    .map(({ stopId }) => stopId)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (previousQueuedStopIds.current === null) {
+      previousQueuedStopIds.current = pendingStopIdSignature;
+      return;
+    }
+    if (previousQueuedStopIds.current !== pendingStopIdSignature) {
+      previousQueuedStopIds.current = pendingStopIdSignature;
+      void loadRoute(true);
+    }
+  }, [loadRoute, pendingStopIdSignature]);
+
+  function markRouteSwipeExcluded() {
+    excludeRouteSwipe.current = true;
+  }
+
+  function handleContentTouchStart(event: GestureResponderEvent) {
+    if (excludeRouteSwipe.current) {
+      excludeRouteSwipe.current = false;
+      routeSwipeStart.current = null;
+      return;
+    }
+
+    routeSwipeStart.current = {
+      pageX: event.nativeEvent.pageX,
+      pageY: event.nativeEvent.pageY,
+    };
+  }
+
+  function handleContentTouchEnd(event: GestureResponderEvent) {
+    const start = routeSwipeStart.current;
+    const startedOnControl = excludeRouteSwipe.current;
+    routeSwipeStart.current = null;
+    excludeRouteSwipe.current = false;
+    if (!start || startedOnControl) {
+      return;
+    }
+
+    const deltaX = event.nativeEvent.pageX - start.pageX;
+    const deltaY = event.nativeEvent.pageY - start.pageY;
+    if (Math.abs(deltaX) < 60 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) {
+      return;
+    }
+
+    const availableViews = getAvailableRouteViews(route);
+    const currentIndex = availableViews.indexOf(selectedRouteView);
+    const nextIndex = currentIndex + (deltaX < 0 ? 1 : -1);
+    if (currentIndex >= 0 && nextIndex >= 0 && nextIndex < availableViews.length) {
+      setSelectedRouteView(availableViews[nextIndex]);
+    }
+  }
+
   function handleStartRoute() {
-    if (!route || route.estado !== "asignada" || route.offlineCopy) {
+    if (
+      !route ||
+      route.estado !== "asignada" ||
+      route.offlineCopy ||
+      !isLoadConfirmed
+    ) {
       return;
     }
 
@@ -90,6 +289,50 @@ export default function TodayRouteScreen() {
       pathname: "../gps-consent",
       params: { routeId: route.id },
     });
+  }
+
+  function handleToggleLoadProduct(productId: string) {
+    setSelectedLoadProductIds((current) =>
+      current.includes(productId)
+        ? current.filter((id) => id !== productId)
+        : [...current, productId],
+    );
+    setIsLoadConfirmed(false);
+    setLoadError(null);
+  }
+
+  async function handleConfirmLoad() {
+    if (
+      !route ||
+      route.estado !== "asignada" ||
+      !conductorId ||
+      isConfirmingLoad
+    ) {
+      return;
+    }
+
+    const products = routeProducts?.total_general.filter(({ producto_id }) =>
+      selectedLoadProductIds.includes(producto_id),
+    );
+    if (!products?.length) {
+      setLoadError("Marca al menos un producto antes de confirmar la lista.");
+      return;
+    }
+
+    setIsConfirmingLoad(true);
+    setLoadError(null);
+    try {
+      await confirmRouteLoad(conductorId, route.id, products);
+      setIsLoadConfirmed(true);
+    } catch (confirmError) {
+      setLoadError(
+        confirmError instanceof Error
+          ? confirmError.message
+          : "No se pudo confirmar la carga.",
+      );
+    } finally {
+      setIsConfirmingLoad(false);
+    }
   }
 
   async function handleSignOut() {
@@ -113,28 +356,50 @@ export default function TodayRouteScreen() {
     }
   }
 
-  async function handleMoveStop(index: number, direction: -1 | 1) {
-    if (!route || isReordering) {
+  async function handleMoveStop(stopId: string, direction: -1 | 1) {
+    if (
+      !route ||
+      (route.estado !== "asignada" && route.estado !== "en_curso") ||
+      route.offlineCopy ||
+      isReordering
+    ) {
       return;
     }
 
+    const queuedStopIds = new Set(
+      pendingDeliveries.map((delivery) => delivery.stopId),
+    );
+    const reorderableStops = route.paradas.filter(
+      (stop) => !isCompletedStop(stop) && !queuedStopIds.has(stop.id),
+    );
+    const index = reorderableStops.findIndex((stop) => stop.id === stopId);
     const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= route.paradas.length) {
+    if (
+      index < 0 ||
+      nextIndex < 0 ||
+      nextIndex >= reorderableStops.length
+    ) {
       return;
     }
 
-    const reorderedStops = [...route.paradas];
+    const reorderedStops = [...reorderableStops];
     [reorderedStops[index], reorderedStops[nextIndex]] = [
       reorderedStops[nextIndex],
       reorderedStops[index],
     ];
+    let reorderableIndex = 0;
+    const orderedRouteStops = route.paradas.map((stop) =>
+      !isCompletedStop(stop) && !queuedStopIds.has(stop.id)
+        ? reorderedStops[reorderableIndex++]
+        : stop,
+    );
 
     setError(null);
     setIsReordering(true);
     try {
       await reorderDriverStops(
         route.id,
-        reorderedStops.map((stop) => stop.id),
+        orderedRouteStops.map((stop) => stop.id),
       );
       await loadRoute(true);
     } catch (reorderError) {
@@ -160,6 +425,27 @@ export default function TodayRouteScreen() {
   }
 
   const stops = route?.paradas ?? [];
+  const pendingStopIds = pendingDeliveries.map(({ stopId }) => stopId);
+  const pendingStopIdSet = new Set(pendingStopIds);
+  const reorderableStops = stops.filter(
+    (stop) => !isCompletedStop(stop) && !pendingStopIdSet.has(stop.id),
+  );
+  const reorderableStopIndexById = new Map(
+    reorderableStops.map((stop, index) => [stop.id, index]),
+  );
+  const visibleStops = stops.filter((stop) =>
+    selectedStopFilter === "todos"
+      ? true
+      : selectedStopFilter === "entregados"
+        ? isCompletedStop(stop)
+        : !isCompletedStop(stop),
+  );
+  const productsByStop = new Map(
+    (routeProducts?.paradas ?? []).map((stop) => [
+      stop.parada_id,
+      stop.productos,
+    ]),
+  );
   const isGpsActive =
     Boolean(route) && gpsState.active && gpsState.routeId === route?.id;
   const pendingPhotoCount = pendingDeliveries.reduce(
@@ -171,16 +457,31 @@ export default function TodayRouteScreen() {
     0,
   );
   const remainingStopCount = stops.filter(
-    (stop) => stop.estado !== "entregada" && stop.estado !== "omitida",
+    (stop) => stop.estado === "pendiente",
   ).length;
   const routeDateLabel = route ? formatRouteDate(route.fecha) : null;
+  const emptyStopsMessage = !route
+    ? "No tienes una ruta asignada para hoy."
+    : stops.length === 0
+      ? "Esta ruta todavía no tiene paradas."
+      : selectedStopFilter === "no_entregados"
+        ? "No quedan paradas sin entregar."
+        : selectedStopFilter === "entregados"
+          ? "Todavía no hay paradas entregadas, parciales u omitidas."
+          : "No hay paradas para mostrar.";
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <FlatList
         contentContainerStyle={styles.listContent}
-        data={selectedRouteView === "lista" ? stops : []}
+        data={selectedRouteView === "lista" ? visibleStops : []}
         keyExtractor={(stop) => stop.id}
+        onTouchCancel={() => {
+          routeSwipeStart.current = null;
+          excludeRouteSwipe.current = false;
+        }}
+        onTouchEnd={handleContentTouchEnd}
+        onTouchStart={handleContentTouchStart}
         ListHeaderComponent={
           <View style={styles.header}>
             <View style={styles.topBar}>
@@ -215,22 +516,31 @@ export default function TodayRouteScreen() {
                     <Text style={styles.offlineTag}>Sin conexión</Text>
                   ) : null}
                 </View>
-                <View style={styles.stats}>
-                  <View style={styles.stat}>
-                    <Text style={styles.statValue}>{stops.length}</Text>
-                    <Text style={styles.statLabel}>paradas</Text>
+                {selectedRouteView !== "mapa" ? (
+                  <View
+                    style={[
+                      styles.stats,
+                      selectedRouteView === "lista" &&
+                        route.estado === "asignada" &&
+                        styles.listStats,
+                    ]}
+                  >
+                    <View style={styles.stat}>
+                      <Text style={styles.statValue}>{stops.length}</Text>
+                      <Text style={styles.statLabel}>paradas</Text>
+                    </View>
+                    <View style={styles.stat}>
+                      <Text style={styles.statValue}>{guideCount}</Text>
+                      <Text style={styles.statLabel}>
+                        {guideCount === 1 ? "guía" : "guías"}
+                      </Text>
+                    </View>
+                    <View style={styles.stat}>
+                      <Text style={styles.statValue}>{remainingStopCount}</Text>
+                      <Text style={styles.statLabel}>por visitar</Text>
+                    </View>
                   </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statValue}>{guideCount}</Text>
-                    <Text style={styles.statLabel}>
-                      {guideCount === 1 ? "guía" : "guías"}
-                    </Text>
-                  </View>
-                  <View style={styles.stat}>
-                    <Text style={styles.statValue}>{remainingStopCount}</Text>
-                    <Text style={styles.statLabel}>por visitar</Text>
-                  </View>
-                </View>
+                ) : null}
                 {route.offlineCopy ? (
                   <Text style={styles.offlineNotice}>
                     Mostrando la última ruta guardada. Algunas acciones no
@@ -264,6 +574,7 @@ export default function TodayRouteScreen() {
                     {!isGpsActive || gpsState.error ? (
                       <Pressable
                         accessibilityRole="button"
+                        onTouchStart={markRouteSwipeExcluded}
                         onPress={() =>
                           router.push({
                             pathname: "../gps-consent",
@@ -285,10 +596,14 @@ export default function TodayRouteScreen() {
                     accessibilityState={{
                       selected: selectedRouteView === "lista",
                     }}
+                    onTouchStart={markRouteSwipeExcluded}
                     onPress={() => setSelectedRouteView("lista")}
                     style={({ pressed }) => [
                       styles.viewTab,
-                      selectedRouteView === "lista" && styles.viewTabActive,
+                      selectedRouteView === "lista" &&
+                        (route.estado === "asignada"
+                          ? styles.listTabActive
+                          : styles.viewTabActive),
                       pressed && styles.viewTabPressed,
                     ]}
                   >
@@ -296,58 +611,129 @@ export default function TodayRouteScreen() {
                       style={[
                         styles.viewTabText,
                         selectedRouteView === "lista" &&
-                          styles.viewTabTextActive,
+                          (route.estado === "asignada"
+                            ? styles.listTabTextActive
+                            : styles.viewTabTextActive),
                       ]}
                     >
                       ☷  Lista
                     </Text>
                   </Pressable>
+                  {route.estado === "asignada" ? (
+                    <Pressable
+                      accessibilityRole="tab"
+                      accessibilityState={{
+                        selected: selectedRouteView === "carga",
+                      }}
+                      onTouchStart={markRouteSwipeExcluded}
+                      onPress={() => setSelectedRouteView("carga")}
+                      style={({ pressed }) => [
+                        styles.viewTab,
+                        selectedRouteView === "carga" && styles.viewTabActive,
+                        pressed && styles.viewTabPressed,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.viewTabText,
+                          selectedRouteView === "carga" &&
+                            styles.viewTabTextActive,
+                        ]}
+                      >
+                        Carga
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   <Pressable
                     accessibilityRole="tab"
                     accessibilityState={{
-                      selected: selectedRouteView === "carga",
+                      selected: selectedRouteView === "mapa",
                     }}
-                    onPress={() => setSelectedRouteView("carga")}
+                    onTouchStart={markRouteSwipeExcluded}
+                    onPress={() => setSelectedRouteView("mapa")}
                     style={({ pressed }) => [
                       styles.viewTab,
-                      selectedRouteView === "carga" && styles.viewTabActive,
+                      selectedRouteView === "mapa" && styles.viewTabActive,
                       pressed && styles.viewTabPressed,
                     ]}
                   >
                     <Text
                       style={[
                         styles.viewTabText,
-                        selectedRouteView === "carga" &&
+                        selectedRouteView === "mapa" &&
                           styles.viewTabTextActive,
                       ]}
                     >
-                      Carga
+                      ⌖  Mapa
                     </Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityLabel="Ver mapa de la ruta"
-                    accessibilityRole="button"
-                    onPress={() => router.push("/map")}
-                    style={({ pressed }) => [
-                      styles.viewTab,
-                      pressed && styles.viewTabPressed,
-                    ]}
-                  >
-                    <Text style={styles.viewTabText}>⌖  Mapa</Text>
                   </Pressable>
                 </View>
                 {selectedRouteView === "lista" ? (
-                  <View style={styles.stopListHeading}>
-                    <Text style={styles.sectionHeading}>Orden de visita</Text>
-                    {stops.length > 1 ? (
-                      <Text style={styles.reorderHint}>
-                        Ordena con las flechas
-                      </Text>
-                    ) : null}
+                  <>
+                    <View style={styles.stopListHeading}>
+                      <Text style={styles.sectionHeading}>Orden de visita</Text>
+                    </View>
+                    <View style={styles.stopFilterRow}>
+                      <View
+                        collapsable={false}
+                        ref={stopFilterAnchorRef}
+                      >
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            expanded: isStopFilterOpen,
+                          }}
+                          onTouchStart={markRouteSwipeExcluded}
+                          onPress={toggleStopFilter}
+                          style={({ pressed }) => [
+                            styles.stopFilterButton,
+                            pressed && styles.stopFilterButtonPressed,
+                          ]}
+                        >
+                          <Text style={styles.stopFilterButtonText}>
+                            {stopListFilters.find(
+                              ({ id }) => id === selectedStopFilter,
+                            )?.label ?? "No entregados"}
+                          </Text>
+                          <Text style={styles.stopFilterChevron}>
+                            {isStopFilterOpen ? "▴" : "▾"}
+                          </Text>
+                        </Pressable>
+                      </View>
+                      {selectedStopFilter === "no_entregados" &&
+                      route.offlineCopy !== true &&
+                      reorderableStops.length > 1 ? (
+                        <Text style={styles.reorderHint}>
+                          Ordena con las flechas
+                        </Text>
+                      ) : null}
+                    </View>
+                  </>
+                ) : null}
+                {selectedRouteView === "carga" ? (
+                  <RouteLoadChecklist
+                    error={loadError ?? productsError}
+                    isConfirmed={isLoadConfirmed}
+                    isLoading={isLoadingProducts}
+                    onToggleProduct={handleToggleLoadProduct}
+                    onInteractionStart={markRouteSwipeExcluded}
+                    products={routeProducts?.total_general ?? []}
+                    selectedProductIds={selectedLoadProductIds}
+                  />
+                ) : null}
+                {selectedRouteView === "mapa" ? (
+                  <View onTouchStart={markRouteSwipeExcluded}>
+                    <ActiveRouteMap
+                      pendingStopIds={pendingStopIds}
+                      route={route}
+                    />
                   </View>
-                ) : (
-                  <RouteProductsSummary conductorId={conductorId} />
-                )}
+                ) : null}
+                {selectedRouteView !== "carga" && productsError ? (
+                  <Text accessibilityRole="alert" style={styles.error}>
+                    {productsError}
+                  </Text>
+                ) : null}
               </>
             ) : null}
             {selectedRouteView === "lista" &&
@@ -378,6 +764,7 @@ export default function TodayRouteScreen() {
                 ) : null}
                 <Pressable
                   accessibilityRole="button"
+                  onTouchStart={markRouteSwipeExcluded}
                   onPress={() => void refreshOutbox(true)}
                   style={styles.pendingRetry}
                 >
@@ -392,13 +779,14 @@ export default function TodayRouteScreen() {
                 {outboxError}
               </Text>
             ) : null}
-            {selectedRouteView === "lista" && error ? (
+            {error ? (
               <View style={styles.errorBox}>
                 <Text accessibilityRole="alert" style={styles.error}>
                   {error}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
+                  onTouchStart={markRouteSwipeExcluded}
                   onPress={() => void loadRoute()}
                   style={styles.retryButton}
                 >
@@ -420,9 +808,7 @@ export default function TodayRouteScreen() {
           selectedRouteView === "lista" ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyTitle}>
-                {route
-                  ? "Esta ruta todavía no tiene paradas."
-                  : "No tienes una ruta asignada para hoy."}
+                {emptyStopsMessage}
               </Text>
               <Text style={styles.emptyText}>
                 Desliza hacia abajo para actualizar.
@@ -430,64 +816,113 @@ export default function TodayRouteScreen() {
             </View>
           ) : undefined
         }
-        renderItem={({ item, index }) => (
-          <View style={styles.stopRow}>
-            <Pressable
-              accessibilityLabel={`Ver detalle de la parada ${index + 1}`}
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({ pathname: "/stop/[id]", params: { id: item.id } })
-              }
-              style={styles.stopPressable}
-            >
+        renderItem={({ item, index }) => {
+          const reorderableIndex = reorderableStopIndexById.get(item.id);
+          const canShowMoveControls =
+            selectedStopFilter === "no_entregados" &&
+            (route?.estado === "asignada" || route?.estado === "en_curso") &&
+            reorderableIndex !== undefined;
+          const canMoveUp =
+            canShowMoveControls &&
+            reorderableIndex !== undefined &&
+            reorderableIndex > 0;
+          const canMoveDown =
+            canShowMoveControls &&
+            reorderableIndex !== undefined &&
+            reorderableIndex < reorderableStops.length - 1;
+
+          return (
+            <View style={styles.stopRow}>
               <StopCard
-                hasPendingDelivery={pendingDeliveries.some(
-                  (action) => action.stopId === item.id,
-                )}
-                number={index + 1}
+                hasPendingDelivery={pendingStopIdSet.has(item.id)}
+                number={item.posicion || index + 1}
+                onInteractionStart={markRouteSwipeExcluded}
+                onPress={() =>
+                  router.push({
+                    pathname: "/stop/[id]",
+                    params: { id: item.id },
+                  })
+                }
+                products={productsByStop.get(item.id)}
                 stop={item}
               />
-            </Pressable>
-            <View style={styles.moveControls}>
-              <Pressable
-                accessibilityLabel={`Mover parada ${index + 1} hacia arriba`}
-                accessibilityRole="button"
-                disabled={
-                  isReordering || route?.offlineCopy === true || index === 0
-                }
-                onPress={() => void handleMoveStop(index, -1)}
-                style={({ pressed }) => [
-                  styles.moveButton,
-                  pressed && styles.moveButtonPressed,
-                  (isReordering || route?.offlineCopy === true || index === 0) &&
-                    styles.moveDisabledButton,
-                ]}
-              >
-                <Text style={styles.moveButtonText}>↑</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel={`Mover parada ${index + 1} hacia abajo`}
-                accessibilityRole="button"
-                disabled={
-                  isReordering ||
-                  route?.offlineCopy === true ||
-                  index === stops.length - 1
-                }
-                onPress={() => void handleMoveStop(index, 1)}
-                style={({ pressed }) => [
-                  styles.moveButton,
-                  pressed && styles.moveButtonPressed,
-                  (isReordering ||
-                    route?.offlineCopy === true ||
-                    index === stops.length - 1) &&
-                    styles.moveDisabledButton,
-                ]}
-              >
-                <Text style={styles.moveButtonText}>↓</Text>
-              </Pressable>
+              {canShowMoveControls ? (
+                <View style={styles.moveControls}>
+                  <Pressable
+                    accessibilityLabel={`Mover parada ${item.posicion} hacia arriba`}
+                    accessibilityRole="button"
+                    disabled={
+                      isReordering ||
+                      route?.offlineCopy === true ||
+                      !canMoveUp
+                    }
+                    onTouchStart={markRouteSwipeExcluded}
+                    onPress={() => void handleMoveStop(item.id, -1)}
+                    style={({ pressed }) => [
+                      styles.moveButton,
+                      (isReordering ||
+                        route?.offlineCopy === true ||
+                        !canMoveUp) &&
+                        styles.moveButtonDisabled,
+                      !isReordering &&
+                        route?.offlineCopy !== true &&
+                        canMoveUp &&
+                        styles.moveButtonEnabled,
+                      pressed && styles.moveButtonPressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.moveButtonText,
+                        !isReordering &&
+                          route?.offlineCopy !== true &&
+                          canMoveUp &&
+                          styles.moveButtonTextEnabled,
+                      ]}
+                    >
+                      ↑
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Mover parada ${item.posicion} hacia abajo`}
+                    accessibilityRole="button"
+                    disabled={
+                      isReordering ||
+                      route?.offlineCopy === true ||
+                      !canMoveDown
+                    }
+                    onTouchStart={markRouteSwipeExcluded}
+                    onPress={() => void handleMoveStop(item.id, 1)}
+                    style={({ pressed }) => [
+                      styles.moveButton,
+                      (isReordering ||
+                        route?.offlineCopy === true ||
+                        !canMoveDown) &&
+                        styles.moveButtonDisabled,
+                      !isReordering &&
+                        route?.offlineCopy !== true &&
+                        canMoveDown &&
+                        styles.moveButtonEnabled,
+                      pressed && styles.moveButtonPressed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.moveButtonText,
+                        !isReordering &&
+                          route?.offlineCopy !== true &&
+                          canMoveDown &&
+                          styles.moveButtonTextEnabled,
+                      ]}
+                    >
+                      ↓
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
-          </View>
-        )}
+          );
+        }}
         ListFooterComponent={
           selectedRouteView === "lista" ? (
             <View style={styles.listEndSpace} />
@@ -497,19 +932,61 @@ export default function TodayRouteScreen() {
       {route ? (
         <View style={styles.bottomAction}>
           {route.estado === "asignada" ? (
-            <Pressable
-              accessibilityRole="button"
-              disabled={stops.length === 0 || route.offlineCopy === true}
-              onPress={() => void handleStartRoute()}
-              style={({ pressed }) => [
-                styles.startButton,
-                pressed && styles.startButtonPressed,
-                (stops.length === 0 || route.offlineCopy === true) &&
-                  styles.disabledButton,
-              ]}
-            >
-              <Text style={styles.startButtonText}>▷  Iniciar ruta</Text>
-            </Pressable>
+            selectedRouteView === "carga" ? (
+              <Pressable
+                accessibilityRole="button"
+                onTouchStart={markRouteSwipeExcluded}
+                disabled={
+                  isConfirmingLoad ||
+                  isLoadingProducts ||
+                  selectedLoadProductIds.length === 0
+                }
+                onPress={() => void handleConfirmLoad()}
+                style={({ pressed }) => [
+                  styles.startButton,
+                  pressed && styles.startButtonPressed,
+                  (isConfirmingLoad ||
+                    isLoadingProducts ||
+                    selectedLoadProductIds.length === 0) &&
+                    styles.disabledButton,
+                ]}
+              >
+                {isConfirmingLoad ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.startButtonText}>
+                    {isLoadConfirmed ? "Lista confirmada" : "Confirmar Lista"}
+                  </Text>
+                )}
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                onTouchStart={markRouteSwipeExcluded}
+                accessibilityState={{
+                  disabled:
+                    stops.length === 0 ||
+                    route.offlineCopy === true ||
+                    !isLoadConfirmed,
+                }}
+                disabled={
+                  stops.length === 0 ||
+                  route.offlineCopy === true ||
+                  !isLoadConfirmed
+                }
+                onPress={() => void handleStartRoute()}
+                style={({ pressed }) => [
+                  styles.startButton,
+                  pressed && styles.startButtonPressed,
+                  (stops.length === 0 ||
+                    route.offlineCopy === true ||
+                    !isLoadConfirmed) &&
+                    styles.disabledButton,
+                ]}
+              >
+                <Text style={styles.startButtonText}>▷  Iniciar ruta</Text>
+              </Pressable>
+            )
           ) : (
             <>
               <View style={styles.startedBanner}>
@@ -517,6 +994,7 @@ export default function TodayRouteScreen() {
               </View>
               <Pressable
                 accessibilityRole="button"
+                onTouchStart={markRouteSwipeExcluded}
                 disabled={route.offlineCopy === true}
                 onPress={() =>
                   router.push({
@@ -536,6 +1014,7 @@ export default function TodayRouteScreen() {
           )}
           <Pressable
             accessibilityRole="button"
+            onTouchStart={markRouteSwipeExcluded}
             disabled={isSigningOut || route.estado === "en_curso"}
             onPress={() => void handleSignOut()}
             style={({ pressed }) => [
@@ -556,6 +1035,7 @@ export default function TodayRouteScreen() {
         <View style={styles.bottomAction}>
           <Pressable
             accessibilityRole="button"
+            onTouchStart={markRouteSwipeExcluded}
             disabled={isSigningOut}
             onPress={() => void handleSignOut()}
             style={[styles.signOutButton, isSigningOut && styles.disabledButton]}
@@ -568,6 +1048,52 @@ export default function TodayRouteScreen() {
           </Pressable>
         </View>
       )}
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setIsStopFilterOpen(false)}
+        statusBarTranslucent
+        transparent
+        visible={isStopFilterOpen}
+      >
+        <View style={styles.stopFilterModal}>
+          <Pressable
+            accessibilityLabel="Cerrar opciones de vista"
+            accessibilityRole="button"
+            onPress={() => setIsStopFilterOpen(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={[styles.stopFilterMenu, stopFilterPosition]}>
+            {stopListFilters.map(({ id, label }) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: selectedStopFilter === id }}
+                key={id}
+                onTouchStart={markRouteSwipeExcluded}
+                onPress={() => {
+                  setSelectedStopFilter(id);
+                  setIsStopFilterOpen(false);
+                }}
+                style={({ pressed }) => [
+                  styles.stopFilterOption,
+                  selectedStopFilter === id &&
+                    styles.stopFilterOptionSelected,
+                  pressed && styles.stopFilterOptionPressed,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stopFilterOptionText,
+                    selectedStopFilter === id &&
+                      styles.stopFilterOptionTextSelected,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -623,30 +1149,34 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 6,
   },
-  stopPressable: {
-    flex: 1,
-  },
   moveControls: {
     gap: 4,
   },
   moveButton: {
     alignItems: "center",
-    backgroundColor: "#eaf4ef",
+    backgroundColor: "transparent",
     borderRadius: 8,
     height: 36,
     justifyContent: "center",
     width: 34,
   },
+  moveButtonEnabled: {
+    backgroundColor: "#eaf4ef",
+  },
+  moveButtonDisabled: {
+    backgroundColor: "transparent",
+    opacity: 0.45,
+  },
   moveButtonPressed: {
     backgroundColor: "#dcebe2",
   },
   moveButtonText: {
-    color: "#176447",
+    color: "#2850c7",
     fontSize: 18,
     fontWeight: "700",
   },
-  moveDisabledButton: {
-    opacity: 0.4,
+  moveButtonTextEnabled: {
+    color: "#176447",
   },
   header: {
     gap: 10,
@@ -708,6 +1238,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 8,
     paddingVertical: 10,
+  },
+  listStats: {
+    backgroundColor: "#2850c7",
   },
   stat: {
     alignItems: "center",
@@ -781,6 +1314,11 @@ const styles = StyleSheet.create({
   viewTabActive: {
     backgroundColor: "#ffffff",
   },
+  listTabActive: {
+    backgroundColor: "#ffffff",
+    borderColor: "#2850c7",
+    borderWidth: 1,
+  },
   viewTabPressed: {
     backgroundColor: "#dfe8e2",
   },
@@ -792,15 +1330,83 @@ const styles = StyleSheet.create({
   viewTabTextActive: {
     color: "#176447",
   },
+  listTabTextActive: {
+    color: "#2850c7",
+  },
   stopListHeading: {
     alignItems: "baseline",
-    flexDirection: "row",
-    justifyContent: "space-between",
     marginTop: 2,
   },
   sectionHeading: {
     color: "#263c31",
     fontSize: 13,
+    fontWeight: "700",
+  },
+  stopFilterRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 34,
+  },
+  stopFilterButton: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#2850c7",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 32,
+    minWidth: 160,
+    paddingHorizontal: 10,
+  },
+  stopFilterButtonPressed: {
+    backgroundColor: "#eef3ff",
+  },
+  stopFilterButtonText: {
+    color: "#2850c7",
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  stopFilterChevron: {
+    color: "#2850c7",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  stopFilterMenu: {
+    backgroundColor: "#ffffff",
+    borderColor: "#dce5df",
+    borderRadius: 8,
+    borderWidth: 1,
+    minWidth: 160,
+    paddingVertical: 4,
+    position: "absolute",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+  },
+  stopFilterModal: {
+    flex: 1,
+  },
+  stopFilterOption: {
+    justifyContent: "center",
+    minHeight: 38,
+    paddingHorizontal: 10,
+  },
+  stopFilterOptionSelected: {
+    backgroundColor: "#eef3ff",
+  },
+  stopFilterOptionPressed: {
+    backgroundColor: "#e5ebfb",
+  },
+  stopFilterOptionText: {
+    color: "#42544a",
+    fontSize: 13,
+  },
+  stopFilterOptionTextSelected: {
+    color: "#2850c7",
     fontWeight: "700",
   },
   reorderHint: {

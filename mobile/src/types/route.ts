@@ -37,6 +37,7 @@ export type DriverRoute = {
   id: string;
   fecha: string;
   estado: "asignada" | "en_curso";
+  iniciada_en?: string | null;
   paradas: RouteStop[];
   offlineCopy?: boolean;
 };
@@ -53,12 +54,14 @@ export type StopDetail = {
   estado: StopStatus;
   ruta_estado: DriverRoute["estado"];
   posicion: number;
+  total_paradas?: number;
   confirmacion_cliente: CustomerConfirmation;
   motivo_omision: OmissionReason | null;
   comentario_omision: string | null;
   ordenes: (StopOrder & {
     items: {
       id: string;
+      producto_id?: string;
       producto: string;
       unidad: string;
       cantidad_pedida: number;

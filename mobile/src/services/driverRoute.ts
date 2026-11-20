@@ -20,7 +20,10 @@ import type {
   StopStatus,
 } from "@/src/types/route";
 
-type RouteRow = Pick<DriverRoute, "id" | "fecha" | "estado">;
+type RouteRow = Pick<
+  DriverRoute,
+  "id" | "fecha" | "estado" | "iniciada_en"
+>;
 type StopRow = {
   id: string;
   posicion_final: number | null;
@@ -103,7 +106,7 @@ async function fetchTodaysDriverRoute(
 
   const { data: route, error: routeError } = await supabase
     .from("rutas")
-    .select("id, fecha, estado")
+    .select("id, fecha, estado, iniciada_en")
     .eq("conductor_id", conductorId)
     .eq("fecha", getTodayInSantiago())
     .in("estado", ["asignada", "en_curso"])
@@ -319,6 +322,16 @@ async function fetchDriverStopDetails(
   }
   const routeState = route.estado as DriverRoute["estado"];
 
+  const { count: totalStops, error: totalStopsError } = await supabase
+    .from("paradas")
+    .select("id", { count: "exact", head: true })
+    .eq("ruta_id", stopRow.ruta_id);
+
+  throwIfError(totalStopsError);
+  if (totalStops === null) {
+    throw new Error("No se pudo determinar cuántas paradas tiene la ruta.");
+  }
+
   const { data: links, error: linksError } = await supabase
     .from("parada_ordenes")
     .select("orden_id")
@@ -374,6 +387,7 @@ async function fetchDriverStopDetails(
     const orderItems = itemsByOrder.get(item.orden_id) ?? [];
     orderItems.push({
       id: item.id,
+      producto_id: item.producto_id,
       producto: product.nombre,
       unidad: product.unidad,
       cantidad_pedida: item.cantidad_pedida,
@@ -387,6 +401,7 @@ async function fetchDriverStopDetails(
     estado: stopRow.estado,
     ruta_estado: routeState,
     posicion: stopRow.posicion_final ?? stopRow.posicion_sugerida ?? 1,
+    total_paradas: totalStops,
     confirmacion_cliente: stopRow.confirmacion_cliente,
     motivo_omision: stopRow.motivo_omision,
     comentario_omision: stopRow.comentario_omision,

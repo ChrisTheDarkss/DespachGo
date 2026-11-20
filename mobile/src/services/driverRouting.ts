@@ -10,6 +10,10 @@ export type DrivingRoute = {
   coordinates: [number, number][];
   distanceMeters: number;
   durationSeconds: number;
+  legs: {
+    distanceMeters: number;
+    durationSeconds: number;
+  }[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,9 +89,30 @@ export async function getDrivingRoute(
     throw new Error("El servicio de rutas devolvió un recorrido incompleto.");
   }
 
+  const rawLegs = firstRoute.legs;
+  if (!Array.isArray(rawLegs)) {
+    throw new Error("El servicio de rutas devolvió tramos incompletos.");
+  }
+  const legs = rawLegs.map((leg) => {
+    if (
+      !isRecord(leg) ||
+      typeof leg.distance !== "number" ||
+      !Number.isFinite(leg.distance) ||
+      typeof leg.duration !== "number" ||
+      !Number.isFinite(leg.duration)
+    ) {
+      throw new Error("El servicio de rutas devolvió tramos inválidos.");
+    }
+    return {
+      distanceMeters: leg.distance,
+      durationSeconds: leg.duration,
+    };
+  });
+
   return {
     coordinates: routeCoordinates,
     distanceMeters: firstRoute.distance,
     durationSeconds: firstRoute.duration,
+    legs,
   };
 }

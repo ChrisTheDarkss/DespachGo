@@ -53,7 +53,11 @@ function getInitialViewState(points: RouteMapProps["points"]): InitialViewState 
   };
 }
 
-export function RouteMap({ points, drivingRoute }: RouteMapProps) {
+export function RouteMap({
+  points,
+  drivingRoute,
+  compact = false,
+}: RouteMapProps) {
   const lineData = useMemo<FeatureCollection<LineString> | null>(() => {
     if (!drivingRoute) {
       return null;
@@ -79,7 +83,7 @@ export function RouteMap({ points, drivingRoute }: RouteMapProps) {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, compact && styles.compactContainer]}>
       <Map
         mapStyle={openStreetMapStyle}
         style={styles.map}
@@ -130,6 +134,11 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 420,
     overflow: "hidden",
+  },
+  compactContainer: {
+    flex: 0,
+    height: 230,
+    minHeight: 230,
   },
   map: {
     flex: 1,
