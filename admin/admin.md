@@ -248,9 +248,8 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
 | 4-15 Agrupar órdenes del mismo cliente | Listo (casilla en Armar ruta; la regla la aplica `asignar_ruta`) |
 | 4-16 Resumen del día | Versión base (rutas, paradas y estados) |
 | 4-17 Fotos de las guías | Listo en el Resumen del día (falta probar con datos reales) |
-| 4-18 Pendientes de resolver | Fallidas, atrasadas: reprogramar y cancelar. Parciales: solo vista |
-| 4-19 Orden con saldo | **Pendiente** |
-| 4-20 Mapa en vivo de conductores | **Pendiente** |
+| 4-18 Pendientes de resolver | Listo |
+| ~~4-19 Orden con saldo~~ | ~~Pendiente~~ |
 | 4-21 a 4-23 Correcciones, guía del admin y publicación final | **Pendiente** |
 
 ---
@@ -266,8 +265,8 @@ Cada acción termina con un aviso flotante abajo a la derecha: verde si salió b
   Los eventos respetan las reglas RLS: el admin recibe todos. Sin esto el resumen igual se actualiza cada 30 s.
 
 - **Fechas de entrega vacías.** El panel supone que `fecha_entrega` nunca es nula. Comprobar en Supabase: `select count(*) from ordenes where fecha_entrega is null;`. Si da más de 0 (órdenes anteriores a la columna), hay que rellenarlas o hacer el panel tolerante.
-- **Entregas parciales.** Hoy solo se ven en Pendientes; su gestión depende de la tarea 4-19.
-- **Cosas sin construir:** fotos de guías con enlaces temporales (4-17), orden con saldo (4-19) y mapa en vivo con Realtime (4-20).
+- **Entregas parciales.** Hoy solo se ven en Pendientes; ~~su gestión depende de la tarea 4-19~~.
+- **Cosas sin construir:** ~~orden con saldo (4-19)~~.
 - **Pruebas.** No hay pruebas automáticas. Lo revisado hasta ahora es que el proyecto compila (`tsc`) y genera el build de producción, que los parámetros coinciden con el código de las funciones SQL, que las reglas de validación pasan 28 casos de prueba y una revisión visual del estilo. **No se probó de punta a punta contra una base Supabase real.**
 - **Tamaño del paquete.** El build avisa que el archivo principal supera los 500 kB; se puede dividir con importaciones dinámicas si importa el tiempo de carga.
 - **Datos de demostración.** `seed.sql` usa clientes, teléfonos y productos ficticios, con direcciones y coordenadas aproximadas: sirve para probar pantallas, no para validar la geocodificación.
