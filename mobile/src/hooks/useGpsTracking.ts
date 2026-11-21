@@ -1,12 +1,14 @@
 import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import {
   getGpsTrackingState,
+  subscribeToGpsLocation,
   type GpsTrackingState,
 } from "@/src/services/gpsStore";
 import {
   isLocationTrackingActive,
+  stopLocationTracking,
   syncGpsLocation,
 } from "@/src/services/gpsTracking";
 
@@ -15,6 +17,7 @@ const initialState: GpsTrackingState = {
   routeId: null,
   lastUploadedAt: null,
   error: null,
+  latestLocation: null,
 };
 
 export function useGpsTracking(
@@ -23,6 +26,7 @@ export function useGpsTracking(
 ) {
   const [state, setState] = useState(initialState);
   const [error, setError] = useState<string | null>(null);
+  const previousTrackingRef = useRef({ userId, routeId });
 
   const refresh = useCallback(async () => {
     if (!userId) {
@@ -52,6 +56,44 @@ export function useGpsTracking(
       void refresh();
     }, [refresh]),
   );
+
+  useEffect(() => {
+    setState(initialState);
+    setError(null);
+    if (!userId) {
+      return;
+    }
+
+    return subscribeToGpsLocation(userId, (latestLocation) => {
+      setState((currentState) => ({ ...currentState, latestLocation }));
+    });
+  }, [userId]);
+
+  useEffect(() => {
+    const previous = previousTrackingRef.current;
+    previousTrackingRef.current = { userId, routeId };
+
+    const userChanged = Boolean(previous.userId && previous.userId !== userId);
+    const routeChanged = Boolean(
+      previous.userId &&
+        previous.userId === userId &&
+        previous.routeId &&
+        previous.routeId !== routeId,
+    );
+    if (!previous.userId || (!userChanged && !routeChanged)) {
+      return;
+    }
+
+    setState(initialState);
+    setError(null);
+    void stopLocationTracking(previous.userId).catch((stopError: unknown) => {
+      setError(
+        stopError instanceof Error
+          ? stopError.message
+          : "No se pudo detener el seguimiento GPS anterior.",
+      );
+    });
+  }, [routeId, userId]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {

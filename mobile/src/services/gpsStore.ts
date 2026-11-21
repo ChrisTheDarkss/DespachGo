@@ -19,7 +19,10 @@ export type GpsTrackingState = {
   routeId: string | null;
   lastUploadedAt: string | null;
   error: string | null;
+  latestLocation: GpsLocationFix | null;
 };
+
+export const GPS_LOCATION_MAX_AGE_MS = 90_000;
 
 const activeKey = (userId: string) => `@despachgo/gps-active/${userId}`;
 const activeUserKey = "@despachgo/gps-active-user";
@@ -27,16 +30,94 @@ const consentKey = (userId: string, routeId: string) =>
   `@despachgo/gps-consent/${userId}/${routeId}`;
 const pendingKey = (userId: string) => `@despachgo/gps-pending/${userId}`;
 const stateKey = (userId: string) => `@despachgo/gps-state/${userId}`;
+const latestLocationListeners = new Map<
+  string,
+  Set<(location: GpsLocationFix | null) => void>
+>();
 
 const initialState: GpsTrackingState = {
   active: false,
   routeId: null,
   lastUploadedAt: null,
   error: null,
+  latestLocation: null,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isValidGpsLocationFix(
+  value: unknown,
+): value is GpsLocationFix {
+  return (
+    isRecord(value) &&
+    typeof value.latitude === "number" &&
+    Number.isFinite(value.latitude) &&
+    value.latitude >= -90 &&
+    value.latitude <= 90 &&
+    typeof value.longitude === "number" &&
+    Number.isFinite(value.longitude) &&
+    value.longitude >= -180 &&
+    value.longitude <= 180 &&
+    (value.accuracy === null ||
+      (typeof value.accuracy === "number" &&
+        Number.isFinite(value.accuracy))) &&
+    typeof value.timestamp === "number" &&
+    Number.isFinite(value.timestamp) &&
+    value.timestamp >= 0
+  );
+}
+
+export function isGpsLocationFixFresh(
+  value: GpsLocationFix | null | undefined,
+  now = Date.now(),
+): value is GpsLocationFix {
+  return (
+    isValidGpsLocationFix(value) &&
+    value.timestamp <= now &&
+    now - value.timestamp <= GPS_LOCATION_MAX_AGE_MS
+  );
+}
+
+export function subscribeToGpsLocation(
+  userId: string,
+  listener: (location: GpsLocationFix | null) => void,
+) {
+  const listeners =
+    latestLocationListeners.get(userId) ?? new Set<(location: GpsLocationFix | null) => void>();
+  listeners.add(listener);
+  latestLocationListeners.set(userId, listeners);
+
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      latestLocationListeners.delete(userId);
+    }
+  };
+}
+
+function notifyGpsLocationListeners(
+  userId: string,
+  location: GpsLocationFix | null,
+) {
+  latestLocationListeners.get(userId)?.forEach((listener) => listener(location));
+}
+
+async function updateLatestGpsLocation(
+  userId: string,
+  location: GpsLocationFix,
+) {
+  const currentState = await getGpsTrackingState(userId);
+  if (
+    currentState.latestLocation &&
+    currentState.latestLocation.timestamp >= location.timestamp
+  ) {
+    return;
+  }
+
+  await setGpsTrackingState(userId, { latestLocation: location });
+  notifyGpsLocationListeners(userId, location);
 }
 
 function parseJson(value: string, description: string) {
@@ -95,7 +176,9 @@ export async function setActiveGpsRoute(route: ActiveGpsRoute) {
     routeId: route.routeId,
     lastUploadedAt: null,
     error: null,
+    latestLocation: null,
   });
+  notifyGpsLocationListeners(route.userId, null);
 }
 
 export async function clearActiveGpsRoute(
@@ -110,7 +193,9 @@ export async function clearActiveGpsRoute(
     active: false,
     routeId: null,
     error,
+    latestLocation: null,
   });
+  notifyGpsLocationListeners(userId, null);
 }
 
 export async function getCurrentActiveGpsRoute() {
@@ -127,13 +212,20 @@ export async function getGpsTrackingState(
   }
 
   const parsed = parseJson(value, "El estado de seguimiento GPS");
+  const latestLocation =
+    isRecord(parsed) && parsed.latestLocation === undefined
+      ? null
+      : isRecord(parsed)
+        ? parsed.latestLocation
+        : undefined;
   if (
     !isRecord(parsed) ||
     typeof parsed.active !== "boolean" ||
     (parsed.routeId !== null && typeof parsed.routeId !== "string") ||
     (parsed.lastUploadedAt !== null &&
       typeof parsed.lastUploadedAt !== "string") ||
-    (parsed.error !== null && typeof parsed.error !== "string")
+    (parsed.error !== null && typeof parsed.error !== "string") ||
+    (latestLocation !== null && !isValidGpsLocationFix(latestLocation))
   ) {
     throw new Error("El estado de seguimiento GPS tiene un formato inválido.");
   }
@@ -142,6 +234,7 @@ export async function getGpsTrackingState(
     routeId: parsed.routeId,
     lastUploadedAt: parsed.lastUploadedAt,
     error: parsed.error,
+    latestLocation,
   };
 }
 
@@ -206,6 +299,9 @@ export async function processGpsLocation(
   const activeRoute = await getActiveGpsRoute(userId);
   if (!activeRoute) {
     return "inactive";
+  }
+  if (isValidGpsLocationFix(fix)) {
+    await updateLatestGpsLocation(userId, fix);
   }
 
   if (!supabase) {

@@ -724,6 +724,10 @@ export default function TodayRouteScreen() {
                 {selectedRouteView === "mapa" ? (
                   <View onTouchStart={markRouteSwipeExcluded}>
                     <ActiveRouteMap
+                      currentLocation={gpsState.latestLocation}
+                      gpsTrackingActive={
+                        gpsState.active && gpsState.routeId === route.id
+                      }
                       pendingStopIds={pendingStopIds}
                       route={route}
                     />
