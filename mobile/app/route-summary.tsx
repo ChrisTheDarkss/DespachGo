@@ -188,7 +188,7 @@ export default function RouteSummaryScreen() {
   const [confirmedLoad, setConfirmedLoad] =
     useState<ConfirmedRouteLoad | null>(null);
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
-  const [distanceError, setDistanceError] = useState<string | null>(null);
+  const [, setDistanceError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [isLoading, setIsLoading] = useState(true);
   const [isFinalizing, setIsFinalizing] = useState(false);
@@ -812,9 +812,6 @@ export default function RouteSummaryScreen() {
           <Text style={styles.warning}>
             El seguimiento GPS no aparece activo.
           </Text>
-        ) : null}
-        {distanceError ? (
-          <Text style={styles.warning}>{distanceError}</Text>
         ) : null}
       </ScrollView>
 

@@ -75,9 +75,10 @@ export async function startLocationTracking(
         });
       },
       {
-        enableHighAccuracy: false,
-        maximumAge: 30_000,
-        timeout: 30_000,
+        // Tiempo real: GPS de alta precisión y nunca una lectura en caché.
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10_000,
       },
     );
   } catch (error) {

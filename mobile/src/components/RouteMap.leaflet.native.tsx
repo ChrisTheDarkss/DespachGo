@@ -212,6 +212,9 @@ export function RouteMap({
         color: #20342a; font: 600 13px sans-serif; min-height: 40px;
         padding: 0 10px;
       }
+      .driver-location-control.following {
+        background: #0891b2; border-color: #0891b2; color: #fff;
+      }
     </style>
     <script>
       function reportMapError() {
@@ -237,11 +240,36 @@ export function RouteMap({
           }).addTo(map);
 
           let driverMarker = null;
+          let driverAnimationFrame = null;
+          let lastDriverFixAt = 0;
+          let followDriver = false;
+          let locateButton = null;
           let routeLayers = [];
+
+          function setFollowDriver(value) {
+            followDriver = value;
+            if (locateButton) {
+              locateButton.classList.toggle("following", value);
+              locateButton.textContent = value ? "Siguiendo" : "Mi ubicación";
+            }
+          }
+          // Mantiene el marcador en el centro del mapa sin recalcular las capas.
+          function keepDriverCentered(latLng) {
+            const offset = map
+              .latLngToContainerPoint(latLng)
+              .subtract(map.getSize().divideBy(2));
+            if (Math.abs(offset.x) > 0.5 || Math.abs(offset.y) > 0.5) {
+              map.panBy(offset, { animate: false });
+            }
+          }
+          // El mapa deja de seguir al conductor si el usuario lo arrastra.
+          map.on("dragstart", function() { setFollowDriver(false); });
+
           window.updateDriverLocation = function(latitude, longitude, timestamp, isRecent) {
-            const position = [latitude, longitude];
+            const target = L.latLng(latitude, longitude);
+            const arrivedAt = performance.now();
             if (!driverMarker) {
-              driverMarker = L.circleMarker(position, {
+              driverMarker = L.circleMarker(target, {
                 radius: 9,
                 color: "#ffffff",
                 weight: 3,
@@ -249,12 +277,47 @@ export function RouteMap({
                 fillOpacity: 1
               }).addTo(map);
               driverMarker.bindTooltip("");
+              if (followDriver) { keepDriverCentered(target); }
             } else {
-              driverMarker.setLatLng(position);
               driverMarker.setStyle({
                 fillColor: isRecent ? "#0891b2" : "#64748b"
               });
+              // Se parte desde donde está dibujado el marcador ahora mismo.
+              const from = driverMarker.getLatLng();
+              const jumpMeters = from.distanceTo(target);
+              if (jumpMeters >= 0.5) {
+                if (driverAnimationFrame) {
+                  cancelAnimationFrame(driverAnimationFrame);
+                  driverAnimationFrame = null;
+                }
+                if (jumpMeters > 500) {
+                  // Salto grande (p. ej. al volver del segundo plano): sin animar.
+                  driverMarker.setLatLng(target);
+                  if (followDriver) { keepDriverCentered(target); }
+                } else {
+                  // Movimiento continuo y lineal: el marcador llega al nuevo punto
+                  // justo cuando se espera la siguiente lectura del GPS.
+                  const sinceLastFix = lastDriverFixAt ? arrivedAt - lastDriverFixAt : 1000;
+                  const duration = Math.min(Math.max(sinceLastFix, 300), 1500);
+                  const animateMarker = function(frameTime) {
+                    const progress = Math.min((frameTime - arrivedAt) / duration, 1);
+                    const next = L.latLng(
+                      from.lat + (target.lat - from.lat) * progress,
+                      from.lng + (target.lng - from.lng) * progress
+                    );
+                    driverMarker.setLatLng(next);
+                    if (followDriver) { keepDriverCentered(next); }
+                    if (progress < 1) {
+                      driverAnimationFrame = requestAnimationFrame(animateMarker);
+                    } else {
+                      driverAnimationFrame = null;
+                    }
+                  };
+                  driverAnimationFrame = requestAnimationFrame(animateMarker);
+                }
+              }
             }
+            lastDriverFixAt = arrivedAt;
             driverMarker.setTooltipContent(
               (isRecent ? "Ubicación reciente" : "Última ubicación conocida") +
               " · Actualizada " + new Date(timestamp).toLocaleTimeString()
@@ -286,17 +349,26 @@ export function RouteMap({
             }
           };
           window.clearDriverLocation = function() {
+            if (driverAnimationFrame) {
+              cancelAnimationFrame(driverAnimationFrame);
+              driverAnimationFrame = null;
+            }
             if (driverMarker) {
               map.removeLayer(driverMarker);
               driverMarker = null;
             }
+            lastDriverFixAt = 0;
+            setFollowDriver(false);
           };
+          // "Mi ubicación" centra el mapa y lo deja siguiendo al conductor
+          // mientras se mueve; arrastrar el mapa desactiva el seguimiento.
           window.centerOnDriver = function() {
             if (driverMarker) {
+              setFollowDriver(true);
               map.setView(
                 driverMarker.getLatLng(),
-                Math.max(map.getZoom(), 15),
-                { animate: true }
+                Math.max(map.getZoom(), 16),
+                { animate: false }
               );
             }
           };
@@ -306,6 +378,7 @@ export function RouteMap({
             const button = L.DomUtil.create("button", "driver-location-control");
             button.type = "button";
             button.textContent = "Mi ubicación";
+            locateButton = button;
             button.setAttribute("aria-label", "Centrar mapa en mi ubicación GPS");
             L.DomEvent.disableClickPropagation(button);
             L.DomEvent.on(button, "click", function(event) {

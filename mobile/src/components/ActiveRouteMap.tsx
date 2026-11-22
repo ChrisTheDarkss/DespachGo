@@ -1,5 +1,12 @@
+import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  AppState,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { RouteMap } from "@/src/components/RouteMap";
 import {
   getDrivingRouteWithPartialSegments,
@@ -11,10 +18,26 @@ import {
   isValidGpsLocationFix,
   type GpsLocationFix,
 } from "@/src/services/gpsStore";
+import {
+  getDistanceMeters,
+  trimRouteToLocation,
+} from "@/src/services/routeProgress";
 import type { DriverRoute, RouteStop } from "@/src/types/route";
 
-const ROUTE_REFRESH_DISTANCE_METERS = 250;
-const ROUTE_REFRESH_INTERVAL_MS = 60_000;
+// La línea se ajusta localmente (sin API) cada vez que el conductor avanza
+// al menos esta distancia o pasa este tiempo; así no se redibuja en cada fix.
+const ROUTE_TRIM_DISTANCE_METERS = 8;
+const ROUTE_TRIM_INTERVAL_MS = 3_000;
+// Recalcular con OpenRouteService:
+// - si el conductor se sale de la ruta (reruteo),
+// - si se alejó bastante del punto del último cálculo,
+// - o periódicamente mientras se esté moviendo.
+// Siempre respetando una espera mínima para no agotar la cuota de la API.
+const ROUTE_OFF_ROUTE_METERS = 50;
+const ROUTE_REFRESH_DISTANCE_METERS = 150;
+const ROUTE_PERIODIC_REFRESH_MS = 45_000;
+const ROUTE_PERIODIC_MIN_MOVEMENT_METERS = 25;
+const ROUTE_MIN_REQUEST_INTERVAL_MS = 10_000;
 
 type ActiveRouteMapProps = {
   route: DriverRoute;
@@ -72,37 +95,14 @@ function isCompletedStop(stop: RouteStop) {
   );
 }
 
-function formatElapsedTime(startedAt: string | null, now: number) {
-  if (!startedAt) {
-    return "—";
-  }
-  const elapsedMinutes = Math.max(
-    0,
-    Math.floor((now - new Date(startedAt).getTime()) / 60_000),
-  );
-  if (!Number.isFinite(elapsedMinutes)) {
-    return "—";
-  }
-  const hours = Math.floor(elapsedMinutes / 60);
-  const minutes = elapsedMinutes % 60;
-  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
-}
-
 function formatDistance(distanceMeters: number | null) {
   if (distanceMeters === null) {
     return "—";
   }
-  return `${(distanceMeters / 1000).toFixed(1)} km`;
-}
-
-function formatDuration(durationSeconds: number | null) {
-  if (durationSeconds === null || !Number.isFinite(durationSeconds)) {
-    return "—";
-  }
-  const totalMinutes = Math.ceil(durationSeconds / 60);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
+  const kilometers = distanceMeters / 1000;
+  return Number.isInteger(kilometers)
+    ? `${kilometers}`
+    : kilometers.toFixed(1);
 }
 
 function getMissingLegLabel(
@@ -120,24 +120,55 @@ function getMissingLegLabel(
   return `tramo ${segmentIndex + 1} (${getNodeLabel(segmentIndex)} → ${getNodeLabel(segmentIndex + 1)})`;
 }
 
-function getDistanceMeters(
-  first: { latitude: number; longitude: number },
-  second: { latitude: number; longitude: number },
-) {
-  const radians = (degrees: number) => (degrees * Math.PI) / 180;
-  const latitudeDelta = radians(second.latitude - first.latitude);
-  const longitudeDelta = radians(second.longitude - first.longitude);
-  const firstLatitude = radians(first.latitude);
-  const secondLatitude = radians(second.latitude);
-  const haversine =
-    Math.sin(latitudeDelta / 2) ** 2 +
-    Math.cos(firstLatitude) *
-      Math.cos(secondLatitude) *
-      Math.sin(longitudeDelta / 2) ** 2;
+// Momento en que se detuvo el contador de cada ruta (mientras la app siga
+// abierta), para que no vuelva a avanzar si el mapa se desmonta y monta.
+const frozenElapsedEnd = new Map<string, number>();
+
+function formatElapsed(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return [hours, minutes, rest]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
+}
+
+type ElapsedTimeStatProps = {
+  routeId: string;
+  startedAt?: string | null;
+  stopped: boolean;
+};
+
+function ElapsedTimeStat({ routeId, startedAt, stopped }: ElapsedTimeStatProps) {
+  const startMs = startedAt ? new Date(startedAt).getTime() : NaN;
+  const hasStart = Number.isFinite(startMs);
+  const [tick, setTick] = useState(Date.now());
+
+  if (stopped && hasStart && !frozenElapsedEnd.has(routeId)) {
+    frozenElapsedEnd.set(routeId, Date.now());
+  } else if (!stopped && frozenElapsedEnd.has(routeId)) {
+    frozenElapsedEnd.delete(routeId);
+  }
+  const frozenAt = frozenElapsedEnd.get(routeId);
+
+  useEffect(() => {
+    if (!hasStart || stopped) {
+      return;
+    }
+    setTick(Date.now());
+    const timer = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasStart, stopped]);
+
+  const endMs = frozenAt ?? tick;
   return (
-    6_371_000 *
-    2 *
-    Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+    <View style={styles.stat}>
+      <Text style={styles.statValue}>
+        {hasStart ? formatElapsed((endMs - startMs) / 1000) : "—"}
+      </Text>
+      <Text style={styles.statLabel}>Tiempo recorrido</Text>
+    </View>
   );
 }
 
@@ -165,12 +196,119 @@ export function ActiveRouteMap({
   const points = useMemo(() => getRoutingPoints(stops), [stops]);
   const routeIsActive = gpsTrackingActive && route.estado === "en_curso";
   const [now, setNow] = useState(Date.now());
-  const displayedLocation =
+  const [liveLocation, setLiveLocation] = useState<GpsLocationFix | null>(
+    null,
+  );
+  const [locationWatchError, setLocationWatchError] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!routeIsActive) {
+      setLiveLocation(null);
+      setLocationWatchError(null);
+      return;
+    }
+
+    let disposed = false;
+    let starting = false;
+    let subscription: Location.LocationSubscription | null = null;
+
+    const startWatching = async () => {
+      if (
+        disposed ||
+        starting ||
+        subscription ||
+        AppState.currentState !== "active"
+      ) {
+        return;
+      }
+
+      starting = true;
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted) {
+          throw new Error(
+            "Concede permiso de ubicación para mantener actualizado el marcador del mapa.",
+          );
+        }
+
+        const nextSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.BestForNavigation,
+            distanceInterval: 1,
+            timeInterval: 500,
+          },
+          (location) => {
+            const now = Date.now();
+            const nextLocation = {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              accuracy: location.coords.accuracy,
+              timestamp: Math.max(location.timestamp, now - 10_000),
+            };
+            setNow(now);
+            setLiveLocation((currentLocation) =>
+              currentLocation &&
+              currentLocation.timestamp >= nextLocation.timestamp
+                ? currentLocation
+                : nextLocation,
+            );
+          },
+        );
+
+        if (disposed || AppState.currentState !== "active") {
+          nextSubscription.remove();
+        } else {
+          subscription = nextSubscription;
+          setLocationWatchError(null);
+        }
+      } catch (watchError) {
+        if (!disposed) {
+          setLocationWatchError(
+            watchError instanceof Error
+              ? watchError.message
+              : "No se pudo mantener actualizada la ubicación del mapa.",
+          );
+        }
+      } finally {
+        starting = false;
+      }
+    };
+
+    void startWatching();
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextState) => {
+        if (nextState === "active") {
+          void startWatching();
+        } else {
+          subscription?.remove();
+          subscription = null;
+        }
+      },
+    );
+
+    return () => {
+      disposed = true;
+      appStateSubscription.remove();
+      subscription?.remove();
+    };
+  }, [route.id, routeIsActive]);
+
+  const savedLocation =
     routeIsActive &&
     isValidGpsLocationFix(currentLocation) &&
     currentLocation.timestamp <= now
       ? currentLocation
       : null;
+  const displayedLocation =
+    routeIsActive &&
+    liveLocation &&
+    liveLocation.timestamp <= now &&
+    (!savedLocation || liveLocation.timestamp > savedLocation.timestamp)
+      ? liveLocation
+      : savedLocation;
   const locationIsRecent =
     displayedLocation !== null &&
     isGpsLocationFixFresh(displayedLocation, now);
@@ -197,12 +335,62 @@ export function ActiveRouteMap({
     routeResult.includesDriverOrigin &&
     displayedLocation !== null &&
     !locationIsRecent;
-  const drivingRoute =
+  const baseDrivingRoute =
     routeResultMatchesPoints &&
     (routeResult.includesDriverOrigin === Boolean(routeOrigin) ||
       isRetainingLastKnownRoute)
       ? routeResult.route
       : null;
+
+  // Posición usada para recortar la línea (se actualiza con throttle).
+  const [trimOrigin, setTrimOrigin] = useState<GpsLocationFix | null>(null);
+  const lastTrimOrigin = useRef<GpsLocationFix | null>(null);
+  const progressRef = useRef<{ route: DrivingRoute | null; segment: number }>({
+    route: null,
+    segment: 0,
+  });
+
+  useEffect(() => {
+    if (!routeIsActive) {
+      lastTrimOrigin.current = null;
+      setTrimOrigin(null);
+      return;
+    }
+    if (!routeOrigin) {
+      return;
+    }
+    const last = lastTrimOrigin.current;
+    if (
+      !last ||
+      getDistanceMeters(last, routeOrigin) >= ROUTE_TRIM_DISTANCE_METERS ||
+      routeOrigin.timestamp - last.timestamp >= ROUTE_TRIM_INTERVAL_MS
+    ) {
+      lastTrimOrigin.current = routeOrigin;
+      setTrimOrigin(routeOrigin);
+    }
+  }, [routeIsActive, routeOriginKey]);
+
+  const routeProgress = useMemo(() => {
+    if (
+      !baseDrivingRoute ||
+      !routeResult?.includesDriverOrigin ||
+      !trimOrigin
+    ) {
+      return null;
+    }
+    if (progressRef.current.route !== baseDrivingRoute) {
+      progressRef.current = { route: baseDrivingRoute, segment: 0 };
+    }
+    const progress = trimRouteToLocation(
+      baseDrivingRoute,
+      trimOrigin,
+      progressRef.current.segment,
+    );
+    progressRef.current.segment = progress.segmentIndex;
+    return progress;
+  }, [baseDrivingRoute, routeResult?.includesDriverOrigin, trimOrigin]);
+  const drivingRoute = routeProgress?.route ?? baseDrivingRoute;
+  const offRouteMeters = routeProgress?.offRouteMeters ?? 0;
   const gpsStatusMessage = !routeIsActive
     ? "El seguimiento GPS no está activo para esta ruta. Verifica los permisos y activa el seguimiento para usar Mi ubicación."
     : !displayedLocation
@@ -224,16 +412,29 @@ export function ActiveRouteMap({
   useEffect(() => {
     const includesDriverOrigin = routeOrigin !== null;
     const previousRequest = lastRouteRequest.current;
+    const sinceLastRequest = previousRequest
+      ? now - previousRequest.requestedAt
+      : Infinity;
+    const canRequestAgain = sinceLastRequest >= ROUTE_MIN_REQUEST_INTERVAL_MS;
+    const movedMeters =
+      routeOrigin !== null && previousRequest?.origin
+        ? getDistanceMeters(previousRequest.origin, routeOrigin)
+        : 0;
+    const accuracyMargin = Math.max(
+      ROUTE_OFF_ROUTE_METERS,
+      routeOrigin?.accuracy ?? 0,
+    );
+    const isOffRoute =
+      routeOrigin !== null &&
+      Number.isFinite(offRouteMeters) &&
+      offRouteMeters > accuracyMargin;
     const movedEnough =
-      routeOrigin !== null &&
-      previousRequest?.origin !== null &&
-      previousRequest?.origin !== undefined &&
-      getDistanceMeters(previousRequest.origin, routeOrigin) >=
-        ROUTE_REFRESH_DISTANCE_METERS;
+      canRequestAgain && movedMeters >= ROUTE_REFRESH_DISTANCE_METERS;
     const waitedLongEnough =
-      routeOrigin !== null &&
-      previousRequest !== null &&
-      now - previousRequest.requestedAt >= ROUTE_REFRESH_INTERVAL_MS;
+      canRequestAgain &&
+      sinceLastRequest >= ROUTE_PERIODIC_REFRESH_MS &&
+      movedMeters >= ROUTE_PERIODIC_MIN_MOVEMENT_METERS;
+    const reroute = canRequestAgain && isOffRoute;
     const originBecameStale =
       previousRequest?.includesDriverOrigin === true &&
       !includesDriverOrigin &&
@@ -245,7 +446,8 @@ export function ActiveRouteMap({
       (previousRequest.includesDriverOrigin !== includesDriverOrigin &&
         !originBecameStale) ||
       movedEnough ||
-      waitedLongEnough;
+      waitedLongEnough ||
+      reroute;
 
     if (!shouldRecalculate) {
       return;
@@ -331,12 +533,6 @@ export function ActiveRouteMap({
       ? drivingRoute.distanceMeters
       : null) ??
     (points.length === 1 && !routeOrigin ? 0 : null);
-  const elapsedTime = formatElapsedTime(route.iniciada_en ?? null, now);
-  const estimatedDuration = formatDuration(
-    drivingRoute && drivingRoute.legs.length > 0
-      ? drivingRoute.durationSeconds
-      : null,
-  );
   const missingLegLabels =
     drivingRoute?.partial?.missingLegs.map(({ segmentIndex }) =>
       getMissingLegLabel(
@@ -355,28 +551,13 @@ export function ActiveRouteMap({
         </View>
         <View style={styles.stat}>
           <Text style={styles.statValue}>{formatDistance(distanceMeters)}</Text>
-          <Text style={styles.statLabel}>
-            {drivingRoute?.partial
-              ? "km parciales"
-              : isRetainingLastKnownRoute
-                ? "km estimados"
-                : "km de ruta"}
-          </Text>
+          <Text style={styles.statLabel}>km</Text>
         </View>
-        <View style={styles.stat}>
-          <Text style={styles.statValue}>{elapsedTime}</Text>
-          <Text style={styles.statLabel}>tiempo transcurrido</Text>
-        </View>
-        <View style={styles.stat}>
-          <Text style={styles.statValue}>{estimatedDuration}</Text>
-          <Text style={styles.statLabel}>
-            {drivingRoute?.partial
-              ? "duración parcial"
-              : isRetainingLastKnownRoute
-                ? "duración · última ubicación"
-                : "duración estimada"}
-          </Text>
-        </View>
+        <ElapsedTimeStat
+          routeId={route.id}
+          startedAt={route.iniciada_en}
+          stopped={stops.length === 0 && !hasPendingActions}
+        />
       </View>
       {stops.length === 0 ? (
         <View style={styles.finishedCard}>
@@ -422,6 +603,11 @@ export function ActiveRouteMap({
               {gpsStatusMessage}
             </Text>
           )}
+          {locationWatchError ? (
+            <Text accessibilityRole="alert" style={styles.warning}>
+              {locationWatchError}
+            </Text>
+          ) : null}
           {stopsWithoutCoordinates > 0 ? (
             <Text accessibilityRole="alert" style={styles.warning}>
               {stopsWithoutCoordinates === 1
@@ -476,7 +662,15 @@ export function ActiveRouteMap({
             <Text style={styles.secondaryText}>
               {nextStopAddress || "Dirección no disponible"}
             </Text>
-            <Text style={styles.confirmation}>
+            <Text
+              style={[
+                styles.confirmation,
+                nextStop?.confirmacion_cliente === "confirmo" &&
+                  styles.confirmationConfirmed,
+                nextStop?.confirmacion_cliente === "no_habra_nadie" &&
+                  styles.confirmationNobody,
+              ]}
+            >
               {nextStop?.confirmacion_cliente === "confirmo"
                 ? "Cliente confirmó"
                 : nextStop?.confirmacion_cliente === "no_habra_nadie"
@@ -588,5 +782,13 @@ const styles = StyleSheet.create({
   confirmation: {
     color: "#52645a",
     fontSize: 10,
+  },
+  confirmationConfirmed: {
+    color: "#176447",
+    fontWeight: "700",
+  },
+  confirmationNobody: {
+    color: "#c62828",
+    fontWeight: "700",
   },
 });

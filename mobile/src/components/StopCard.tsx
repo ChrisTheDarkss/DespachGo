@@ -117,7 +117,15 @@ export function StopCard({
           </Text>
         </View>
         <Text style={styles.address}>{address}</Text>
-        <Text style={styles.confirmation}>
+        <Text
+          style={[
+            styles.confirmation,
+            stop.confirmacion_cliente === "confirmo" &&
+              styles.confirmationConfirmed,
+            stop.confirmacion_cliente === "no_habra_nadie" &&
+              styles.confirmationNobody,
+          ]}
+        >
           {confirmationLabels[stop.confirmacion_cliente]}
         </Text>
         {products.length > 0 ? (
@@ -220,6 +228,14 @@ const styles = StyleSheet.create({
   confirmation: {
     color: "#637168",
     fontSize: 9,
+  },
+  confirmationConfirmed: {
+    color: "#176447",
+    fontWeight: "700",
+  },
+  confirmationNobody: {
+    color: "#c62828",
+    fontWeight: "700",
   },
   pending: {
     color: "#a84f14",

@@ -105,20 +105,21 @@ export async function startLocationTracking(
   await setActiveGpsRoute({ userId, routeId, consentedAt });
   try {
     await Location.startLocationUpdatesAsync(locationTaskName, {
-      accuracy: Location.Accuracy.Balanced,
+      // Tiempo real: una posición por segundo (o cada metro recorrido),
+      // sin agrupar lecturas (no usar deferredUpdates*) y sin pausas
+      // automáticas del sistema.
+      accuracy: Location.Accuracy.BestForNavigation,
       activityType: Location.ActivityType.AutomotiveNavigation,
-      distanceInterval: 100,
-      deferredUpdatesDistance: 100,
-      deferredUpdatesInterval: 30_000,
+      distanceInterval: 1,
+      timeInterval: 1_000,
+      pausesUpdatesAutomatically: false,
+      showsBackgroundLocationIndicator: true,
       foregroundService: {
         notificationTitle: "DespachGo · ruta en curso",
         notificationBody: "El GPS se comparte con la empresa durante tu ruta.",
         notificationColor: "#176447",
         killServiceOnDestroy: false,
       },
-      pausesUpdatesAutomatically: true,
-      showsBackgroundLocationIndicator: true,
-      timeInterval: 30_000,
     });
   } catch (error) {
     await clearActiveGpsRoute(

@@ -40,7 +40,17 @@ export function useGpsTracking(
       if (routeId) {
         await isLocationTrackingActive(userId, routeId);
       }
-      setState(await getGpsTrackingState(userId));
+      const refreshedState = await getGpsTrackingState(userId);
+      setState((currentState) => {
+        const latestLocation =
+          currentState.latestLocation &&
+          (!refreshedState.latestLocation ||
+            currentState.latestLocation.timestamp >
+              refreshedState.latestLocation.timestamp)
+            ? currentState.latestLocation
+            : refreshedState.latestLocation;
+        return { ...refreshedState, latestLocation };
+      });
       setError(null);
     } catch (refreshError) {
       setError(
@@ -65,7 +75,15 @@ export function useGpsTracking(
     }
 
     return subscribeToGpsLocation(userId, (latestLocation) => {
-      setState((currentState) => ({ ...currentState, latestLocation }));
+      setState((currentState) => {
+        if (!latestLocation) {
+          return { ...currentState, latestLocation: null };
+        }
+        return currentState.latestLocation &&
+          currentState.latestLocation.timestamp >= latestLocation.timestamp
+          ? currentState
+          : { ...currentState, latestLocation };
+      });
     });
   }, [userId]);
 
