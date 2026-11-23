@@ -26,6 +26,7 @@ export function RouteMap({
   currentLocation = null,
   gpsTrackingActive = false,
   compact = false,
+  onInteractionChange,
   onLoadError,
 }: LeafletRouteMapProps) {
   const webViewRef = useRef<WebView<{}>>(null);
@@ -179,9 +180,13 @@ export function RouteMap({
         onLoadError();
       } else if (event.nativeEvent.data === "center-on-driver") {
         void centerOnDriver();
+      } else if (event.nativeEvent.data === "map-touch-start") {
+        onInteractionChange?.(true);
+      } else if (event.nativeEvent.data === "map-touch-end") {
+        onInteractionChange?.(false);
       }
     },
-    [centerOnDriver, onLoadError],
+    [centerOnDriver, onInteractionChange, onLoadError],
   );
 
   const html = useMemo(() => {
@@ -234,6 +239,25 @@ export function RouteMap({
         } else {
           const data = ${mapData};
           const map = L.map("map", { zoomControl: true });
+
+          // Avisa a la app cuando el dedo toca el mapa para que la pantalla
+          // no se desplace mientras se arrastra (evita que el mapa "se vaya").
+          const mapElement = document.getElementById("map");
+          const notifyTouch = (active) => {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(
+                active ? "map-touch-start" : "map-touch-end"
+              );
+            }
+          };
+          mapElement.addEventListener("touchstart", () => notifyTouch(true), { passive: true });
+          ["touchend", "touchcancel"].forEach((type) => {
+            mapElement.addEventListener(type, (event) => {
+              if (!event.touches || event.touches.length === 0) {
+                notifyTouch(false);
+              }
+            }, { passive: true });
+          });
           L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
             attribution: "&copy; OpenStreetMap contributors"
@@ -439,6 +463,8 @@ export function RouteMap({
         onMessage={handleMessage}
         originWhitelist={["*"]}
         ref={webViewRef}
+        nestedScrollEnabled
+        overScrollMode="never"
         scrollEnabled={false}
         source={source}
         style={styles.webView}

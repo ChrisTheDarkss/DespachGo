@@ -7,4 +7,9 @@ export type RouteMapProps = {
   currentLocation?: GpsLocationFix | null;
   gpsTrackingActive?: boolean;
   compact?: boolean;
+  /**
+   * Avisa cuando el dedo empieza/termina de tocar el mapa, para que la pantalla
+   * que lo contiene deje de desplazarse mientras se arrastra el mapa.
+   */
+  onInteractionChange?: (active: boolean) => void;
 };

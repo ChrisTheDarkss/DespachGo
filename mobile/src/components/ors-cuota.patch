@@ -1,0 +1,727 @@
+--- a/src/services/driverRouting.ts
++++ b/src/services/driverRouting.ts
+@@ -424,7 +424,159 @@
+   };
+ }
+ 
+-async function requestDrivingRoute(
++type OrsQuotaErrorKind = "invalid-key" | "daily-quota" | "forbidden" | "rate-limit";
++
++export const ORS_QUOTA_USER_MESSAGE =
++  "Se produjo un error al detectar la ruta. Por favor, solicita ayuda a Administración.";
++
++// Errores de autenticación/cuota (401, 403, 429). No son errores de ruteo:
++// nunca deben disparar peticiones de recuperación por tramos.
++// `message` es el texto que puede ver el conductor; el motivo técnico queda en
++// `detail` y se escribe en la consola.
++export class OrsQuotaError extends Error {
++  constructor(
++    readonly detail: string,
++    readonly kind: OrsQuotaErrorKind,
++    readonly status: number,
++  ) {
++    super(ORS_QUOTA_USER_MESSAGE);
++    this.name = "OrsQuotaError";
++  }
++}
++
++/**
++ * Texto de error de ruta para mostrar al conductor. Si el motivo es el límite
++ * o la clave de OpenRouteService, usa un mensaje genérico con su nombre.
++ */
++export function formatRoutingErrorForDriver(
++  error: unknown,
++  driverName: string | null | undefined,
++  fallback: string,
++): string {
++  if (error instanceof OrsQuotaError) {
++    const name = driverName?.trim();
++    return `Hola${name ? ` ${name}` : ""}: ${
++      ORS_QUOTA_USER_MESSAGE.charAt(0).toLowerCase() +
++      ORS_QUOTA_USER_MESSAGE.slice(1)
++    }`;
++  }
++  return error instanceof Error && error.message ? error.message : fallback;
++}
++
++// Tras un 401/403/429 dejamos de llamar a ORS durante un tiempo para no seguir
++// consumiendo cuota (ni agravar un posible bloqueo por abuso).
++const ORS_COOLDOWN_MS: Record<OrsQuotaErrorKind, number> = {
++  "rate-limit": 60_000, // ventana deslizante de 60 s (40 req/min)
++  "daily-quota": 15 * 60_000, // la cuota diaria se libera tras 24 h desde la 1ª petición
++  forbidden: 5 * 60_000,
++  "invalid-key": 10 * 60_000,
++};
++let orsCooldown: { until: number; error: OrsQuotaError } | null = null;
++
++function startOrsCooldown(error: OrsQuotaError) {
++  const cooldownMs = ORS_COOLDOWN_MS[error.kind];
++  orsCooldown = { until: Date.now() + cooldownMs, error };
++  console.warn(
++    `[ORS] ${error.detail} Sin consultar OpenRouteService durante ${Math.round(cooldownMs / 60_000)} min.`,
++  );
++}
++
++function assertOrsAvailable() {
++  if (orsCooldown && Date.now() < orsCooldown.until) {
++    const { error } = orsCooldown;
++    throw new OrsQuotaError(error.detail, error.kind, error.status);
++  }
++  orsCooldown = null;
++}
++
++export function getOrsCooldownRemainingMs() {
++  return orsCooldown ? Math.max(0, orsCooldown.until - Date.now()) : 0;
++}
++
++async function buildOrsQuotaError(response: Response): Promise<OrsQuotaError> {
++  const { status } = response;
++  const remaining = response.headers.get("x-ratelimit-remaining");
++  let body = "";
++  try {
++    body = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 200);
++  } catch {
++    body = "";
++  }
++  const withBody = (text: string) => (body ? `${text} Respuesta: ${body}` : text);
++
++  if (status === 429) {
++    return new OrsQuotaError(
++      withBody("Límite por minuto de OpenRouteService superado (429)."),
++      "rate-limit",
++      status,
++    );
++  }
++  if (status === 401) {
++    return new OrsQuotaError(
++      withBody("Clave de OpenRouteService rechazada (401)."),
++      "invalid-key",
++      status,
++    );
++  }
++  // 403: ORS lo usa tanto para cuota agotada ("Quota exceeded") como para
++  // clave bloqueada ("Access to this API has been disallowed").
++  if (
++    (remaining !== null && Number(remaining) <= 0) ||
++    body.toLowerCase().includes("quota")
++  ) {
++    return new OrsQuotaError(
++      withBody("Cuota de OpenRouteService agotada (403)."),
++      "daily-quota",
++      status,
++    );
++  }
++  return new OrsQuotaError(
++    withBody("OpenRouteService denegó el acceso (403)."),
++    "forbidden",
++    status,
++  );
++}
++
++// Caché en memoria de rutas calculadas (evita repetir la misma consulta, p. ej.
++// resumen de ruta + mapa) y deduplicación de peticiones idénticas en vuelo.
++const ROUTE_CACHE_TTL_MS = 10 * 60_000;
++const ROUTE_CACHE_MAX_ENTRIES = 50;
++const routeCache = new Map<string, { expiresAt: number; route: DrivingRoute }>();
++const inFlightRoutes = new Map<string, Promise<DrivingRoute>>();
++
++function getRouteCacheKey(
++  routingPoints: RoutingOrigin[],
++  segmentOffset: number,
++) {
++  return `${segmentOffset}|${routingPoints
++    .map(({ latitud, longitud }) => `${longitud.toFixed(5)},${latitud.toFixed(5)}`)
++    .join(";")}`;
++}
++
++function readRouteCache(key: string): DrivingRoute | null {
++  const entry = routeCache.get(key);
++  if (!entry) {
++    return null;
++  }
++  if (entry.expiresAt < Date.now()) {
++    routeCache.delete(key);
++    return null;
++  }
++  return entry.route;
++}
++
++function writeRouteCache(key: string, route: DrivingRoute) {
++  routeCache.set(key, { expiresAt: Date.now() + ROUTE_CACHE_TTL_MS, route });
++  while (routeCache.size > ROUTE_CACHE_MAX_ENTRIES) {
++    const oldest = routeCache.keys().next().value;
++    if (oldest === undefined) {
++      break;
++    }
++    routeCache.delete(oldest);
++  }
++}
++
++async function requestDrivingRouteUncached(
+   points: RoutingPoint[],
+   origin?: RoutingOrigin,
+   segmentOffset = 0,
+@@ -451,6 +603,8 @@
+     );
+   }
+ 
++  assertOrsAvailable();
++
+   let response: Response;
+   try {
+     response = await fetch(
+@@ -476,15 +630,14 @@
+     );
+   }
+ 
+-  if (response.status === 401 || response.status === 403) {
+-    throw new Error(
+-      "OpenRouteService rechazó la clave de API. Verifica su configuración y permisos.",
+-    );
+-  }
+-  if (response.status === 429) {
+-    throw new Error(
+-      "Se alcanzó la cuota de solicitudes de OpenRouteService. Inténtalo más tarde.",
+-    );
++  if (
++    response.status === 401 ||
++    response.status === 403 ||
++    response.status === 429
++  ) {
++    const quotaError = await buildOrsQuotaError(response);
++    startOrsCooldown(quotaError);
++    throw quotaError;
+   }
+   if (!response.ok) {
+     if (response.status === 404) {
+@@ -527,6 +680,42 @@
+   );
+ }
+ 
++async function requestDrivingRoute(
++  points: RoutingPoint[],
++  origin?: RoutingOrigin,
++  segmentOffset = 0,
++): Promise<DrivingRoute> {
++  const routingPoints = origin ? [origin, ...points] : points;
++  const canCache = routingPoints.every(
++    ({ latitud, longitud }) =>
++      Number.isFinite(latitud) && Number.isFinite(longitud),
++  );
++  if (!canCache) {
++    return requestDrivingRouteUncached(points, origin, segmentOffset);
++  }
++
++  const cacheKey = getRouteCacheKey(routingPoints, segmentOffset);
++  const cached = readRouteCache(cacheKey);
++  if (cached) {
++    return cached;
++  }
++  const pending = inFlightRoutes.get(cacheKey);
++  if (pending) {
++    return pending;
++  }
++
++  const request = requestDrivingRouteUncached(points, origin, segmentOffset)
++    .then((route) => {
++      writeRouteCache(cacheKey, route);
++      return route;
++    })
++    .finally(() => {
++      inFlightRoutes.delete(cacheKey);
++    });
++  inFlightRoutes.set(cacheKey, request);
++  return request;
++}
++
+ export async function getDrivingRoute(
+   points: RoutingPoint[],
+   origin?: RoutingOrigin,
+--- a/src/components/ActiveRouteMap.tsx
++++ b/src/components/ActiveRouteMap.tsx
+@@ -8,7 +8,9 @@
+   View,
+ } from "react-native";
+ import { RouteMap } from "@/src/components/RouteMap";
++import { useAuth } from "@/src/hooks/useAuth";
+ import {
++  formatRoutingErrorForDriver,
+   getDrivingRouteWithPartialSegments,
+   type DrivingRoute,
+   type RoutingPoint,
+@@ -18,6 +20,7 @@
+   isValidGpsLocationFix,
+   type GpsLocationFix,
+ } from "@/src/services/gpsStore";
++import { getDriverFirstName } from "@/src/utils/driverName";
+ import {
+   getDistanceMeters,
+   trimRouteToLocation,
+@@ -34,16 +37,17 @@
+ // - o periódicamente mientras se esté moviendo.
+ // Siempre respetando una espera mínima para no agotar la cuota de la API.
+ const ROUTE_OFF_ROUTE_METERS = 50;
+-const ROUTE_REFRESH_DISTANCE_METERS = 150;
+-const ROUTE_PERIODIC_REFRESH_MS = 45_000;
++const ROUTE_REFRESH_DISTANCE_METERS = 300;
++const ROUTE_PERIODIC_REFRESH_MS = 120_000;
+ const ROUTE_PERIODIC_MIN_MOVEMENT_METERS = 25;
+-const ROUTE_MIN_REQUEST_INTERVAL_MS = 10_000;
++const ROUTE_MIN_REQUEST_INTERVAL_MS = 30_000;
+ 
+ type ActiveRouteMapProps = {
+   route: DriverRoute;
+   pendingStopIds?: string[];
+   currentLocation?: GpsLocationFix | null;
+   gpsTrackingActive?: boolean;
++  onMapInteractionChange?: (active: boolean) => void;
+ };
+ 
+ const noPendingStopIds: string[] = [];
+@@ -177,7 +181,10 @@
+   pendingStopIds = noPendingStopIds,
+   currentLocation = null,
+   gpsTrackingActive = false,
++  onMapInteractionChange,
+ }: ActiveRouteMapProps) {
++  const { session } = useAuth();
++  const driverName = getDriverFirstName(session);
+   const pendingStopIdsKey = JSON.stringify(pendingStopIds);
+   const pendingStopIdSet = useMemo(
+     () => new Set<string>(JSON.parse(pendingStopIdsKey)),
+@@ -324,7 +331,7 @@
+     )
+     .join(",");
+   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
+-  const [routingError, setRoutingError] = useState<string | null>(null);
++  const [routingError, setRoutingError] = useState<Error | null>(null);
+   const [isRouting, setIsRouting] = useState(false);
+   const lastRouteRequest = useRef<RouteRequest | null>(null);
+   const latestRouteRequestId = useRef(0);
+@@ -502,8 +509,8 @@
+         if (isMounted.current && requestId === latestRouteRequestId.current) {
+           setRoutingError(
+             error instanceof Error
+-              ? error.message
+-              : "No se pudo calcular el recorrido vial.",
++              ? error
++              : new Error("No se pudo calcular el recorrido vial."),
+           );
+         }
+       })
+@@ -579,6 +586,7 @@
+               drivingRoute={drivingRoute}
+               gpsTrackingActive={routeIsActive}
+               key={pointIds}
++              onInteractionChange={onMapInteractionChange}
+               points={points}
+             />
+           ) : (
+@@ -617,7 +625,11 @@
+           ) : null}
+           {routingError ? (
+             <Text accessibilityRole="alert" style={styles.warning}>
+-              {routingError}{" "}
++              {formatRoutingErrorForDriver(
++                routingError,
++                driverName,
++                "No se pudo calcular el recorrido vial.",
++              )}{" "}
+               {drivingRoute
+                 ? "Se conserva el último recorrido calculado."
+                 : "Se muestran las paradas sin el recorrido vial."}
+--- a/src/components/RouteMap.native.tsx
++++ b/src/components/RouteMap.native.tsx
+@@ -1,13 +1,46 @@
+ import { useState } from "react";
++import { StyleSheet, Text, View } from "react-native";
+ import { RouteMap as LeafletRouteMap } from "@/src/components/RouteMap.leaflet.native";
+-import { RouteMap as MapLibreRouteMap } from "@/src/components/RouteMap.maplibre.native";
+ import type { RouteMapProps } from "@/src/components/RouteMap.types";
+ 
++type MapLibreRouteMapComponent =
++  typeof import("./RouteMap.maplibre.native").RouteMap;
++
++// MapLibre es un módulo nativo: no existe en Expo Go y solo está disponible en
++// un development build. Si se importara arriba del archivo, la app entera se
++// caería al arrancar en Expo Go ('MLRNCameraModule' could not be found), aunque
++// MapLibre sea solo el respaldo de Leaflet. Por eso se carga de forma diferida.
++let mapLibreRouteMap: MapLibreRouteMapComponent | null | undefined;
++
++function loadMapLibreRouteMap(): MapLibreRouteMapComponent | null {
++  if (mapLibreRouteMap === undefined) {
++    try {
++      // eslint-disable-next-line @typescript-eslint/no-require-imports
++      mapLibreRouteMap = require("./RouteMap.maplibre.native").RouteMap;
++    } catch {
++      mapLibreRouteMap = null;
++    }
++  }
++  return mapLibreRouteMap ?? null;
++}
++
+ export function RouteMap(props: RouteMapProps) {
+   const [useMapLibre, setUseMapLibre] = useState(false);
+ 
+   if (useMapLibre) {
+-    return <MapLibreRouteMap {...props} />;
++    const MapLibreRouteMap = loadMapLibreRouteMap();
++    if (MapLibreRouteMap) {
++      return <MapLibreRouteMap {...props} />;
++    }
++    return (
++      <View style={[styles.container, props.compact && styles.compactContainer]}>
++        <Text style={styles.title}>No se pudo cargar el mapa.</Text>
++        <Text style={styles.detail}>
++          Comprueba tu conexión. El mapa alternativo requiere un development
++          build (no funciona en Expo Go).
++        </Text>
++      </View>
++    );
+   }
+ 
+   return (
+@@ -17,3 +50,26 @@
+     />
+   );
+ }
++
++const styles = StyleSheet.create({
++  container: {
++    backgroundColor: "#ffffff",
++    borderColor: "#e0e5e1",
++    borderRadius: 12,
++    borderWidth: 1,
++    gap: 6,
++    padding: 18,
++  },
++  compactContainer: {
++    padding: 12,
++  },
++  title: {
++    color: "#20342a",
++    fontSize: 15,
++    fontWeight: "700",
++  },
++  detail: {
++    color: "#52645a",
++    fontSize: 13,
++  },
++});
+--- a/src/components/RouteMap.leaflet.native.tsx
++++ b/src/components/RouteMap.leaflet.native.tsx
+@@ -26,6 +26,7 @@
+   currentLocation = null,
+   gpsTrackingActive = false,
+   compact = false,
++  onInteractionChange,
+   onLoadError,
+ }: LeafletRouteMapProps) {
+   const webViewRef = useRef<WebView<{}>>(null);
+@@ -179,9 +180,13 @@
+         onLoadError();
+       } else if (event.nativeEvent.data === "center-on-driver") {
+         void centerOnDriver();
++      } else if (event.nativeEvent.data === "map-touch-start") {
++        onInteractionChange?.(true);
++      } else if (event.nativeEvent.data === "map-touch-end") {
++        onInteractionChange?.(false);
+       }
+     },
+-    [centerOnDriver, onLoadError],
++    [centerOnDriver, onInteractionChange, onLoadError],
+   );
+ 
+   const html = useMemo(() => {
+@@ -234,6 +239,25 @@
+         } else {
+           const data = ${mapData};
+           const map = L.map("map", { zoomControl: true });
++
++          // Avisa a la app cuando el dedo toca el mapa para que la pantalla
++          // no se desplace mientras se arrastra (evita que el mapa "se vaya").
++          const mapElement = document.getElementById("map");
++          const notifyTouch = (active) => {
++            if (window.ReactNativeWebView) {
++              window.ReactNativeWebView.postMessage(
++                active ? "map-touch-start" : "map-touch-end"
++              );
++            }
++          };
++          mapElement.addEventListener("touchstart", () => notifyTouch(true), { passive: true });
++          ["touchend", "touchcancel"].forEach((type) => {
++            mapElement.addEventListener(type, (event) => {
++              if (!event.touches || event.touches.length === 0) {
++                notifyTouch(false);
++              }
++            }, { passive: true });
++          });
+           L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+             maxZoom: 19,
+             attribution: "&copy; OpenStreetMap contributors"
+@@ -439,6 +463,8 @@
+         onMessage={handleMessage}
+         originWhitelist={["*"]}
+         ref={webViewRef}
++        nestedScrollEnabled
++        overScrollMode="never"
+         scrollEnabled={false}
+         source={source}
+         style={styles.webView}
+--- a/src/components/RouteMap.types.ts
++++ b/src/components/RouteMap.types.ts
+@@ -7,4 +7,9 @@
+   currentLocation?: GpsLocationFix | null;
+   gpsTrackingActive?: boolean;
+   compact?: boolean;
++  /**
++   * Avisa cuando el dedo empieza/termina de tocar el mapa, para que la pantalla
++   * que lo contiene deje de desplazarse mientras se arrastra el mapa.
++   */
++  onInteractionChange?: (active: boolean) => void;
+ };
+--- a/src/hooks/useAuth.tsx
++++ b/src/hooks/useAuth.tsx
+@@ -1,12 +1,23 @@
+ import type { Session } from "@supabase/supabase-js";
+-import { createContext, useContext, useEffect, useMemo, useState } from "react";
++import {
++  createContext,
++  useCallback,
++  useContext,
++  useEffect,
++  useMemo,
++  useState,
++} from "react";
+ import { supabase, supabaseConfigurationError } from "@/src/lib/supabase";
++import { getDriverFirstName } from "@/src/utils/driverName";
+ 
+ type AuthContextValue = {
+   initializationError: string | null;
+   configurationError: string | null;
+   isLoading: boolean;
+   session: Session | null;
++  /** Mensaje de bienvenida que se muestra una vez, justo después de iniciar sesión. */
++  welcomeMessage: string | null;
++  dismissWelcome: () => void;
+   signIn: (email: string, password: string) => Promise<void>;
+   signOut: () => Promise<void>;
+ };
+@@ -17,6 +28,8 @@
+   const [session, setSession] = useState<Session | null>(null);
+   const [isLoading, setIsLoading] = useState(Boolean(supabase));
+   const [initializationError, setInitializationError] = useState<string | null>(null);
++  const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
++  const dismissWelcome = useCallback(() => setWelcomeMessage(null), []);
+ 
+   useEffect(() => {
+     if (!supabase) {
+@@ -66,19 +79,26 @@
+       configurationError: supabaseConfigurationError,
+       isLoading,
+       session,
++      welcomeMessage,
++      dismissWelcome,
+       async signIn(email, password) {
+         if (!supabase) {
+           throw new Error(
+             supabaseConfigurationError ?? "Supabase no está configurado.",
+           );
+         }
+-        const { error } = await supabase.auth.signInWithPassword({
++        const { data, error } = await supabase.auth.signInWithPassword({
+           email,
+           password,
+         });
+         if (error) {
+           throw new Error("No se pudo iniciar sesión. Revisa tus datos e inténtalo otra vez.");
+         }
++        // Solo al iniciar sesión a mano; no al restaurar una sesión guardada.
++        const driverName = getDriverFirstName(
++          data.session ?? { user: data.user },
++        );
++        setWelcomeMessage(driverName ? `Bienvenido ${driverName}` : "Bienvenido");
+       },
+       async signOut() {
+         if (!supabase) {
+@@ -90,9 +110,10 @@
+         if (error) {
+           throw new Error(`No se pudo cerrar la sesión: ${error.message}`);
+         }
++        setWelcomeMessage(null);
+       },
+     }),
+-    [initializationError, isLoading, session],
++    [dismissWelcome, initializationError, isLoading, session, welcomeMessage],
+   );
+ 
+   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+--- a/app/_layout.tsx
++++ b/app/_layout.tsx
+@@ -6,6 +6,7 @@
+ } from "expo-router";
+ import { StatusBar } from "expo-status-bar";
+ import { useEffect } from "react";
++import { WelcomeBanner } from "@/src/components/WelcomeBanner";
+ import { AuthProvider, useAuth } from "@/src/hooks/useAuth";
+ import "@/src/services/gpsTracking";
+ 
+@@ -32,6 +33,7 @@
+     <>
+       <StatusBar style="dark" />
+       <Stack screenOptions={{ headerShown: false }} />
++      <WelcomeBanner />
+     </>
+   );
+ }
+--- a/app/(tabs)/index.tsx
++++ b/app/(tabs)/index.tsx
+@@ -72,6 +72,8 @@
+     refresh: refreshOutbox,
+   } = useDeliveryOutbox(conductorId);
+   const [route, setRoute] = useState<DriverRoute | null>(null);
++  // true mientras el dedo arrastra el mapa: congela el scroll de la pantalla.
++  const [mapInteracting, setMapInteracting] = useState(false);
+   const [isLoading, setIsLoading] = useState(true);
+   const [isRefreshing, setIsRefreshing] = useState(false);
+   const [isReordering, setIsReordering] = useState(false);
+@@ -235,6 +237,16 @@
+     }
+   }, [loadRoute, pendingStopIdSignature]);
+ 
++  // Seguro: si por algún motivo no llega el aviso de que se soltó el dedo, la
++  // pantalla vuelve a desplazarse sola para no quedar bloqueada.
++  useEffect(() => {
++    if (!mapInteracting) {
++      return;
++    }
++    const timer = setTimeout(() => setMapInteracting(false), 10_000);
++    return () => clearTimeout(timer);
++  }, [mapInteracting]);
++
+   function markRouteSwipeExcluded() {
+     excludeRouteSwipe.current = true;
+   }
+@@ -476,6 +488,7 @@
+         contentContainerStyle={styles.listContent}
+         data={selectedRouteView === "lista" ? visibleStops : []}
+         keyExtractor={(stop) => stop.id}
++        scrollEnabled={!mapInteracting}
+         onTouchCancel={() => {
+           routeSwipeStart.current = null;
+           excludeRouteSwipe.current = false;
+@@ -722,8 +735,16 @@
+                   />
+                 ) : null}
+                 {selectedRouteView === "mapa" ? (
+-                  <View onTouchStart={markRouteSwipeExcluded}>
++                  <View
++                    onTouchEnd={() => setMapInteracting(false)}
++                    onTouchCancel={() => setMapInteracting(false)}
++                    onTouchStart={() => {
++                      markRouteSwipeExcluded();
++                      setMapInteracting(true);
++                    }}
++                  >
+                     <ActiveRouteMap
++                      onMapInteractionChange={setMapInteracting}
+                       currentLocation={gpsState.latestLocation}
+                       gpsTrackingActive={
+                         gpsState.active && gpsState.routeId === route.id
+--- /dev/null
++++ b/src/utils/driverName.ts
+@@ -0,0 +1,21 @@
++// Claves de user_metadata (Supabase Auth) donde puede venir el nombre.
++const NAME_METADATA_KEYS = ["nombre", "full_name", "name", "display_name"];
++
++/** Primer nombre del conductor, o null si la sesión no lo trae. */
++export function getDriverFirstName(
++  session: { user?: { user_metadata?: unknown } | null } | null | undefined,
++): string | null {
++  const metadata = session?.user?.user_metadata as
++    | Record<string, unknown>
++    | undefined;
++  if (!metadata) {
++    return null;
++  }
++  for (const key of NAME_METADATA_KEYS) {
++    const value = metadata[key];
++    if (typeof value === "string" && value.trim()) {
++      return value.trim().split(/\s+/)[0];
++    }
++  }
++  return null;
++}
+--- /dev/null
++++ b/src/components/WelcomeBanner.tsx
+@@ -0,0 +1,70 @@
++import { useEffect } from "react";
++import { Pressable, StyleSheet, Text } from "react-native";
++import { useSafeAreaInsets } from "react-native-safe-area-context";
++import { useAuth } from "@/src/hooks/useAuth";
++
++const WELCOME_DURATION_MS = 4000;
++
++// Aviso breve que confirma que el inicio de sesión funcionó. Vive en el layout
++// raíz para seguir visible cuando la app pasa del login a la pantalla de ruta.
++export function WelcomeBanner() {
++  const { welcomeMessage, dismissWelcome } = useAuth();
++  const insets = useSafeAreaInsets();
++
++  useEffect(() => {
++    if (!welcomeMessage) {
++      return;
++    }
++    const timer = setTimeout(dismissWelcome, WELCOME_DURATION_MS);
++    return () => clearTimeout(timer);
++  }, [dismissWelcome, welcomeMessage]);
++
++  if (!welcomeMessage) {
++    return null;
++  }
++
++  return (
++    <Pressable
++      accessibilityLiveRegion="polite"
++      accessibilityRole="alert"
++      onPress={dismissWelcome}
++      style={[styles.banner, { top: insets.top + 8 }]}
++    >
++      <Text style={styles.icon}>✓</Text>
++      <Text style={styles.text}>{welcomeMessage}</Text>
++    </Pressable>
++  );
++}
++
++const styles = StyleSheet.create({
++  banner: {
++    alignItems: "center",
++    alignSelf: "center",
++    backgroundColor: "#176447",
++    borderRadius: 12,
++    elevation: 8,
++    flexDirection: "row",
++    gap: 10,
++    maxWidth: "90%",
++    minHeight: 48,
++    paddingHorizontal: 18,
++    paddingVertical: 12,
++    position: "absolute",
++    shadowColor: "#000000",
++    shadowOffset: { width: 0, height: 4 },
++    shadowOpacity: 0.2,
++    shadowRadius: 8,
++    zIndex: 1000,
++  },
++  icon: {
++    color: "#ffffff",
++    fontSize: 16,
++    fontWeight: "700",
++  },
++  text: {
++    color: "#ffffff",
++    flexShrink: 1,
++    fontSize: 15,
++    fontWeight: "600",
++  },
++});

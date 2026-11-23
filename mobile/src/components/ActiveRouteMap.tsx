@@ -8,7 +8,9 @@ import {
   View,
 } from "react-native";
 import { RouteMap } from "@/src/components/RouteMap";
+import { useAuth } from "@/src/hooks/useAuth";
 import {
+  formatRoutingErrorForDriver,
   getDrivingRouteWithPartialSegments,
   type DrivingRoute,
   type RoutingPoint,
@@ -18,6 +20,7 @@ import {
   isValidGpsLocationFix,
   type GpsLocationFix,
 } from "@/src/services/gpsStore";
+import { getDriverFirstName } from "@/src/utils/driverName";
 import {
   getDistanceMeters,
   trimRouteToLocation,
@@ -34,16 +37,17 @@ const ROUTE_TRIM_INTERVAL_MS = 3_000;
 // - o periódicamente mientras se esté moviendo.
 // Siempre respetando una espera mínima para no agotar la cuota de la API.
 const ROUTE_OFF_ROUTE_METERS = 50;
-const ROUTE_REFRESH_DISTANCE_METERS = 150;
-const ROUTE_PERIODIC_REFRESH_MS = 45_000;
+const ROUTE_REFRESH_DISTANCE_METERS = 300;
+const ROUTE_PERIODIC_REFRESH_MS = 120_000;
 const ROUTE_PERIODIC_MIN_MOVEMENT_METERS = 25;
-const ROUTE_MIN_REQUEST_INTERVAL_MS = 10_000;
+const ROUTE_MIN_REQUEST_INTERVAL_MS = 30_000;
 
 type ActiveRouteMapProps = {
   route: DriverRoute;
   pendingStopIds?: string[];
   currentLocation?: GpsLocationFix | null;
   gpsTrackingActive?: boolean;
+  onMapInteractionChange?: (active: boolean) => void;
 };
 
 const noPendingStopIds: string[] = [];
@@ -177,7 +181,10 @@ export function ActiveRouteMap({
   pendingStopIds = noPendingStopIds,
   currentLocation = null,
   gpsTrackingActive = false,
+  onMapInteractionChange,
 }: ActiveRouteMapProps) {
+  const { session } = useAuth();
+  const driverName = getDriverFirstName(session);
   const pendingStopIdsKey = JSON.stringify(pendingStopIds);
   const pendingStopIdSet = useMemo(
     () => new Set<string>(JSON.parse(pendingStopIdsKey)),
@@ -324,7 +331,7 @@ export function ActiveRouteMap({
     )
     .join(",");
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
-  const [routingError, setRoutingError] = useState<string | null>(null);
+  const [routingError, setRoutingError] = useState<Error | null>(null);
   const [isRouting, setIsRouting] = useState(false);
   const lastRouteRequest = useRef<RouteRequest | null>(null);
   const latestRouteRequestId = useRef(0);
@@ -502,8 +509,8 @@ export function ActiveRouteMap({
         if (isMounted.current && requestId === latestRouteRequestId.current) {
           setRoutingError(
             error instanceof Error
-              ? error.message
-              : "No se pudo calcular el recorrido vial.",
+              ? error
+              : new Error("No se pudo calcular el recorrido vial."),
           );
         }
       })
@@ -579,6 +586,7 @@ export function ActiveRouteMap({
               drivingRoute={drivingRoute}
               gpsTrackingActive={routeIsActive}
               key={pointIds}
+              onInteractionChange={onMapInteractionChange}
               points={points}
             />
           ) : (
@@ -617,7 +625,11 @@ export function ActiveRouteMap({
           ) : null}
           {routingError ? (
             <Text accessibilityRole="alert" style={styles.warning}>
-              {routingError}{" "}
+              {formatRoutingErrorForDriver(
+                routingError,
+                driverName,
+                "No se pudo calcular el recorrido vial.",
+              )}{" "}
               {drivingRoute
                 ? "Se conserva el último recorrido calculado."
                 : "Se muestran las paradas sin el recorrido vial."}

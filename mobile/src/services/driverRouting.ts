@@ -424,7 +424,159 @@ function parseDrivingRoute(
   };
 }
 
-async function requestDrivingRoute(
+type OrsQuotaErrorKind = "invalid-key" | "daily-quota" | "forbidden" | "rate-limit";
+
+export const ORS_QUOTA_USER_MESSAGE =
+  "Se produjo un error al detectar la ruta. Por favor, solicita ayuda a Administración.";
+
+// Errores de autenticación/cuota (401, 403, 429). No son errores de ruteo:
+// nunca deben disparar peticiones de recuperación por tramos.
+// `message` es el texto que puede ver el conductor; el motivo técnico queda en
+// `detail` y se escribe en la consola.
+export class OrsQuotaError extends Error {
+  constructor(
+    readonly detail: string,
+    readonly kind: OrsQuotaErrorKind,
+    readonly status: number,
+  ) {
+    super(ORS_QUOTA_USER_MESSAGE);
+    this.name = "OrsQuotaError";
+  }
+}
+
+/**
+ * Texto de error de ruta para mostrar al conductor. Si el motivo es el límite
+ * o la clave de OpenRouteService, usa un mensaje genérico con su nombre.
+ */
+export function formatRoutingErrorForDriver(
+  error: unknown,
+  driverName: string | null | undefined,
+  fallback: string,
+): string {
+  if (error instanceof OrsQuotaError) {
+    const name = driverName?.trim();
+    return `Hola${name ? ` ${name}` : ""}: ${
+      ORS_QUOTA_USER_MESSAGE.charAt(0).toLowerCase() +
+      ORS_QUOTA_USER_MESSAGE.slice(1)
+    }`;
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+// Tras un 401/403/429 dejamos de llamar a ORS durante un tiempo para no seguir
+// consumiendo cuota (ni agravar un posible bloqueo por abuso).
+const ORS_COOLDOWN_MS: Record<OrsQuotaErrorKind, number> = {
+  "rate-limit": 60_000, // ventana deslizante de 60 s (40 req/min)
+  "daily-quota": 15 * 60_000, // la cuota diaria se libera tras 24 h desde la 1ª petición
+  forbidden: 5 * 60_000,
+  "invalid-key": 10 * 60_000,
+};
+let orsCooldown: { until: number; error: OrsQuotaError } | null = null;
+
+function startOrsCooldown(error: OrsQuotaError) {
+  const cooldownMs = ORS_COOLDOWN_MS[error.kind];
+  orsCooldown = { until: Date.now() + cooldownMs, error };
+  console.warn(
+    `[ORS] ${error.detail} Sin consultar OpenRouteService durante ${Math.round(cooldownMs / 60_000)} min.`,
+  );
+}
+
+function assertOrsAvailable() {
+  if (orsCooldown && Date.now() < orsCooldown.until) {
+    const { error } = orsCooldown;
+    throw new OrsQuotaError(error.detail, error.kind, error.status);
+  }
+  orsCooldown = null;
+}
+
+export function getOrsCooldownRemainingMs() {
+  return orsCooldown ? Math.max(0, orsCooldown.until - Date.now()) : 0;
+}
+
+async function buildOrsQuotaError(response: Response): Promise<OrsQuotaError> {
+  const { status } = response;
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  let body = "";
+  try {
+    body = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 200);
+  } catch {
+    body = "";
+  }
+  const withBody = (text: string) => (body ? `${text} Respuesta: ${body}` : text);
+
+  if (status === 429) {
+    return new OrsQuotaError(
+      withBody("Límite por minuto de OpenRouteService superado (429)."),
+      "rate-limit",
+      status,
+    );
+  }
+  if (status === 401) {
+    return new OrsQuotaError(
+      withBody("Clave de OpenRouteService rechazada (401)."),
+      "invalid-key",
+      status,
+    );
+  }
+  // 403: ORS lo usa tanto para cuota agotada ("Quota exceeded") como para
+  // clave bloqueada ("Access to this API has been disallowed").
+  if (
+    (remaining !== null && Number(remaining) <= 0) ||
+    body.toLowerCase().includes("quota")
+  ) {
+    return new OrsQuotaError(
+      withBody("Cuota de OpenRouteService agotada (403)."),
+      "daily-quota",
+      status,
+    );
+  }
+  return new OrsQuotaError(
+    withBody("OpenRouteService denegó el acceso (403)."),
+    "forbidden",
+    status,
+  );
+}
+
+// Caché en memoria de rutas calculadas (evita repetir la misma consulta, p. ej.
+// resumen de ruta + mapa) y deduplicación de peticiones idénticas en vuelo.
+const ROUTE_CACHE_TTL_MS = 10 * 60_000;
+const ROUTE_CACHE_MAX_ENTRIES = 50;
+const routeCache = new Map<string, { expiresAt: number; route: DrivingRoute }>();
+const inFlightRoutes = new Map<string, Promise<DrivingRoute>>();
+
+function getRouteCacheKey(
+  routingPoints: RoutingOrigin[],
+  segmentOffset: number,
+) {
+  return `${segmentOffset}|${routingPoints
+    .map(({ latitud, longitud }) => `${longitud.toFixed(5)},${latitud.toFixed(5)}`)
+    .join(";")}`;
+}
+
+function readRouteCache(key: string): DrivingRoute | null {
+  const entry = routeCache.get(key);
+  if (!entry) {
+    return null;
+  }
+  if (entry.expiresAt < Date.now()) {
+    routeCache.delete(key);
+    return null;
+  }
+  return entry.route;
+}
+
+function writeRouteCache(key: string, route: DrivingRoute) {
+  routeCache.set(key, { expiresAt: Date.now() + ROUTE_CACHE_TTL_MS, route });
+  while (routeCache.size > ROUTE_CACHE_MAX_ENTRIES) {
+    const oldest = routeCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    routeCache.delete(oldest);
+  }
+}
+
+async function requestDrivingRouteUncached(
   points: RoutingPoint[],
   origin?: RoutingOrigin,
   segmentOffset = 0,
@@ -451,6 +603,8 @@ async function requestDrivingRoute(
     );
   }
 
+  assertOrsAvailable();
+
   let response: Response;
   try {
     response = await fetch(
@@ -476,15 +630,14 @@ async function requestDrivingRoute(
     );
   }
 
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(
-      "OpenRouteService rechazó la clave de API. Verifica su configuración y permisos.",
-    );
-  }
-  if (response.status === 429) {
-    throw new Error(
-      "Se alcanzó la cuota de solicitudes de OpenRouteService. Inténtalo más tarde.",
-    );
+  if (
+    response.status === 401 ||
+    response.status === 403 ||
+    response.status === 429
+  ) {
+    const quotaError = await buildOrsQuotaError(response);
+    startOrsCooldown(quotaError);
+    throw quotaError;
   }
   if (!response.ok) {
     if (response.status === 404) {
@@ -525,6 +678,42 @@ async function requestDrivingRoute(
     routingPoints.length - 1,
     segmentOffset,
   );
+}
+
+async function requestDrivingRoute(
+  points: RoutingPoint[],
+  origin?: RoutingOrigin,
+  segmentOffset = 0,
+): Promise<DrivingRoute> {
+  const routingPoints = origin ? [origin, ...points] : points;
+  const canCache = routingPoints.every(
+    ({ latitud, longitud }) =>
+      Number.isFinite(latitud) && Number.isFinite(longitud),
+  );
+  if (!canCache) {
+    return requestDrivingRouteUncached(points, origin, segmentOffset);
+  }
+
+  const cacheKey = getRouteCacheKey(routingPoints, segmentOffset);
+  const cached = readRouteCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const pending = inFlightRoutes.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const request = requestDrivingRouteUncached(points, origin, segmentOffset)
+    .then((route) => {
+      writeRouteCache(cacheKey, route);
+      return route;
+    })
+    .finally(() => {
+      inFlightRoutes.delete(cacheKey);
+    });
+  inFlightRoutes.set(cacheKey, request);
+  return request;
 }
 
 export async function getDrivingRoute(

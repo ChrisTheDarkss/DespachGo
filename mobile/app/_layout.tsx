@@ -6,6 +6,7 @@ import {
 } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
+import { WelcomeBanner } from "@/src/components/WelcomeBanner";
 import { AuthProvider, useAuth } from "@/src/hooks/useAuth";
 import "@/src/services/gpsTracking";
 
@@ -32,6 +33,7 @@ function Navigation() {
     <>
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false }} />
+      <WelcomeBanner />
     </>
   );
 }

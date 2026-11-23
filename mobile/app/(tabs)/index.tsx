@@ -72,6 +72,8 @@ export default function TodayRouteScreen() {
     refresh: refreshOutbox,
   } = useDeliveryOutbox(conductorId);
   const [route, setRoute] = useState<DriverRoute | null>(null);
+  // true mientras el dedo arrastra el mapa: congela el scroll de la pantalla.
+  const [mapInteracting, setMapInteracting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isReordering, setIsReordering] = useState(false);
@@ -234,6 +236,16 @@ export default function TodayRouteScreen() {
       void loadRoute(true);
     }
   }, [loadRoute, pendingStopIdSignature]);
+
+  // Seguro: si por algún motivo no llega el aviso de que se soltó el dedo, la
+  // pantalla vuelve a desplazarse sola para no quedar bloqueada.
+  useEffect(() => {
+    if (!mapInteracting) {
+      return;
+    }
+    const timer = setTimeout(() => setMapInteracting(false), 10_000);
+    return () => clearTimeout(timer);
+  }, [mapInteracting]);
 
   function markRouteSwipeExcluded() {
     excludeRouteSwipe.current = true;
@@ -476,6 +488,7 @@ export default function TodayRouteScreen() {
         contentContainerStyle={styles.listContent}
         data={selectedRouteView === "lista" ? visibleStops : []}
         keyExtractor={(stop) => stop.id}
+        scrollEnabled={!mapInteracting}
         onTouchCancel={() => {
           routeSwipeStart.current = null;
           excludeRouteSwipe.current = false;
@@ -722,8 +735,16 @@ export default function TodayRouteScreen() {
                   />
                 ) : null}
                 {selectedRouteView === "mapa" ? (
-                  <View onTouchStart={markRouteSwipeExcluded}>
+                  <View
+                    onTouchEnd={() => setMapInteracting(false)}
+                    onTouchCancel={() => setMapInteracting(false)}
+                    onTouchStart={() => {
+                      markRouteSwipeExcluded();
+                      setMapInteracting(true);
+                    }}
+                  >
                     <ActiveRouteMap
+                      onMapInteractionChange={setMapInteracting}
                       currentLocation={gpsState.latestLocation}
                       gpsTrackingActive={
                         gpsState.active && gpsState.routeId === route.id
