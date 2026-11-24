@@ -1,3 +1,5 @@
+import { supabase, supabaseConfigurationError } from "@/src/lib/supabase";
+
 export type RoutingPoint = {
   id: string;
   number: number;
@@ -596,10 +598,25 @@ async function requestDrivingRouteUncached(
     throw new Error("El origen o una parada tienen coordenadas inválidas.");
   }
 
-  const apiKey = process.env.EXPO_PUBLIC_ORS_API_KEY?.trim();
-  if (!apiKey) {
+  // La clave de OpenRouteService vive en el servidor (Edge Function
+  // `ors-directions`); la app solo envía las coordenadas con la sesión del
+  // conductor.
+  if (!supabase) {
     throw new Error(
-      "Falta configurar EXPO_PUBLIC_ORS_API_KEY para calcular rutas con OpenRouteService.",
+      supabaseConfigurationError ?? "Supabase no está configurado.",
+    );
+  }
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim().replace(
+    /\/+$/,
+    "",
+  );
+  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!supabaseUrl || !supabaseAnonKey || !session?.access_token) {
+    throw new Error(
+      "Tu sesión expiró. Vuelve a iniciar sesión para calcular la ruta.",
     );
   }
 
@@ -607,34 +624,40 @@ async function requestDrivingRouteUncached(
 
   let response: Response;
   try {
-    response = await fetch(
-      "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
-      {
-        method: "POST",
-        headers: {
-          Authorization: apiKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          coordinates: routingPoints.map(({ longitud, latitud }) => [
-            longitud,
-            latitud,
-          ]),
-          instructions: true,
-        }),
+    response = await fetch(`${supabaseUrl}/functions/v1/ors-directions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: supabaseAnonKey,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        coordinates: routingPoints.map(({ longitud, latitud }) => [
+          longitud,
+          latitud,
+        ]),
+      }),
+    });
   } catch {
     throw new Error(
-      "No se pudo conectar con OpenRouteService. Verifica tu conexión e inténtalo nuevamente.",
+      "No se pudo conectar con el servicio de rutas. Verifica tu conexión e inténtalo nuevamente.",
     );
   }
 
+  // 401/403/429 con esta marca vienen de OpenRouteService (clave o cuota).
+  // Sin la marca son rechazos de nuestra propia función (sesión o permisos).
+  const fromOrs = response.headers.get("x-ors-upstream") === "1";
   if (
-    response.status === 401 ||
-    response.status === 403 ||
-    response.status === 429
+    !fromOrs &&
+    (response.status === 401 || response.status === 403)
   ) {
+    throw new Error(
+      response.status === 401
+        ? "Tu sesión expiró. Vuelve a iniciar sesión para calcular la ruta."
+        : "Tu usuario no tiene permiso para calcular rutas. Solicita ayuda a Administración.",
+    );
+  }
+  if (fromOrs && (response.status === 401 || response.status === 403 || response.status === 429)) {
     const quotaError = await buildOrsQuotaError(response);
     startOrsCooldown(quotaError);
     throw quotaError;

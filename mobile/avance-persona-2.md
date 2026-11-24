@@ -201,3 +201,31 @@ Se rediseñó la pantalla previa al cierre para presentar los resultados de la r
 - **Entregados** muestra las paradas entregadas, parciales y omitidas; **Todos** muestra todas. Ambas vistas permiten abrir el detalle, pero no muestran flechas.
 - El mapa recalcula el recorrido vial respetando el orden guardado de las paradas que aún no se completan. En el detalle, la dirección deja de abrir el mapa para entregas completas, parciales u omitidas; llamar al cliente sigue disponible.
 - Verificación: TypeScript, exportaciones Expo para web y Android y `git diff --check` correctos.
+
+## Actualización: seguridad de la clave de OpenRouteService y de la sesión
+
+### Problema
+- La clave de OpenRouteService estaba en la app como `EXPO_PUBLIC_ORS_API_KEY`. Las variables `EXPO_PUBLIC_*` se incrustan en el código compilado, así que podía extraerse del APK o del bundle.
+- La sesión de Supabase se guardaba sin cifrar en AsyncStorage.
+- Las pantallas Detalle de parada, Registrar entrega, Entrega guardada y Omitir parada mostraban un ícono `?` arriba a la derecha que no hacía nada.
+
+### Hecho
+- **Proxy de rutas:** se creó la Edge Function `ors-directions`. Guarda la clave de ORS como secreto del servidor (`ORS_API_KEY`, el mismo que usa `optimizar-ruta`), exige la sesión de un usuario con perfil activo en `perfiles` y solo acepta de 2 a 50 coordenadas válidas. La app ya no necesita la clave.
+- **`src/services/driverRouting.ts`:** ahora llama a `/functions/v1/ors-directions` con el token del conductor. Se mantienen la caché, la pausa por cuota (`OrsQuotaError`) y la recuperación por tramos. Los errores de sesión o permisos de la función se distinguen de los de cuota o clave de ORS mediante la cabecera `x-ors-upstream`, para que una sesión vencida no bloquee los cálculos de ruta por minutos.
+- **Sesión cifrada:** se agregó `src/lib/secureStorage.ts`. Cifra la sesión con AES-256-CTR y un IV aleatorio por escritura. La clave de cifrado se guarda en Keystore (Android) o Keychain (iOS) mediante `expo-secure-store`, y la sesión cifrada queda en AsyncStorage. Las sesiones antiguas sin cifrar se migran solas al abrir la app, sin pedir iniciar sesión de nuevo. En web se mantiene AsyncStorage.
+- **Íconos `?`:** se quitaron de las cuatro pantallas. En su lugar queda un espaciador del mismo ancho que el botón de volver, para que el código de ruta siga centrado. En `route-summary.tsx` (Finalizar ruta) no existía ese ícono en el código actual.
+
+### Verificación
+- Edge Function probada con `curl`, con una cuenta de conductor real:
+  - con sesión: `200` y la cabecera `x-ors-upstream: 1`, con el trazado de la ruta;
+  - con coordenadas inválidas: `400`;
+  - sin sesión: `401`.
+- La función `optimizar-ruta` de Administración no se modificó. Solo comparte el secreto `ORS_API_KEY`.
+- Revisión de sintaxis de los archivos modificados: correcta.
+
+### Archivos principales
+- [`src/services/driverRouting.ts`](./src/services/driverRouting.ts): cálculo de rutas mediante el proxy.
+- [`src/lib/secureStorage.ts`](./src/lib/secureStorage.ts): almacenamiento cifrado de la sesión.
+- [`src/lib/supabase.ts`](./src/lib/supabase.ts): cliente de Supabase con la sesión cifrada.
+- `supabase/functions/ors-directions/index.ts`: Edge Function, que vive en el proyecto de Supabase y no en la app.
+- [`app/stop/[id].tsx`](./app/stop/[id].tsx), [`app/stop/omit/[id].tsx`](./app/stop/omit/[id].tsx) y [`app/delivery/[stopId].tsx`](./app/delivery/[stopId].tsx): se quitó el ícono `?`.

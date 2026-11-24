@@ -749,7 +749,7 @@ export default function RegisterDeliveryScreen() {
           <Text style={styles.routeCode}>
             RUTA {stop.ruta_id.slice(0, 8).toUpperCase()}
           </Text>
-          <Text accessibilityLabel="Ayuda" style={styles.helpIcon}>?</Text>
+          <View style={styles.headerSpacer} />
         </View>
         <ScrollView
           contentContainerStyle={styles.resultContent}
@@ -950,7 +950,7 @@ export default function RegisterDeliveryScreen() {
           <Text style={styles.routeCode}>
             {stop ? `RUTA ${stop.ruta_id.slice(0, 8).toUpperCase()}` : "RUTA"}
           </Text>
-          <Text accessibilityLabel="Ayuda" style={styles.helpIcon}>?</Text>
+          <View style={styles.headerSpacer} />
         </View>
         <View style={styles.heading}>
           <Text accessibilityRole="header" style={styles.title}>
@@ -1280,16 +1280,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.5,
   },
-  helpIcon: {
-    borderColor: "#52645a",
-    borderRadius: 10,
-    borderWidth: 1,
-    color: "#52645a",
-    fontSize: 13,
-    height: 20,
-    overflow: "hidden",
-    textAlign: "center",
-    width: 20,
+  headerSpacer: {
+    width: 44,
   },
   heading: {
     gap: 5,

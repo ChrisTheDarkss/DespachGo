@@ -221,7 +221,7 @@ export default function StopDetailsScreen() {
             <Text style={styles.backText}>‹</Text>
           </Pressable>
           <Text style={styles.routeCode}>{routeCode}</Text>
-          <Text accessibilityLabel="Ayuda" style={styles.helpIcon}>?</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
         <View style={styles.heading}>
@@ -559,18 +559,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.3,
   },
-  helpIcon: {
-    alignItems: "center",
-    borderColor: "#52645a",
-    borderRadius: 9,
-    borderWidth: 1,
-    color: "#52645a",
-    fontSize: 11,
-    height: 18,
-    justifyContent: "center",
-    overflow: "hidden",
-    textAlign: "center",
-    width: 18,
+  headerSpacer: {
+    width: 42,
   },
   heading: {
     gap: 5,
