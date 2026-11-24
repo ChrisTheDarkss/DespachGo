@@ -276,9 +276,6 @@ export default function ResumenDia() {
         </div>
       )}
 
-      <p className="texto-suave">
-        Próximamente: mapa en vivo de los conductores (4-20).
-      </p>
     </div>
   )
 }
