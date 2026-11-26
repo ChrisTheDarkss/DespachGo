@@ -7,13 +7,34 @@
     "scheme": "despachgo",
     "userInterfaceStyle": "light",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "DespachGo usa tu ubicación para compartir tu posición durante la ruta activa.",
+          "locationAlwaysAndWhenInUsePermission": "DespachGo usa tu ubicación en segundo plano únicamente mientras tu ruta está activa.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "DespachGo necesita acceder a tus fotos para adjuntar las guías de despacho.",
+          "cameraPermission": "DespachGo necesita usar la cámara para fotografiar las guías de despacho.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "android": {
-      "package": "cl.despachgo.mobile"
+      "package": "cl.despachgo.mobile",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "extra": {
       "router": {},
@@ -21,6 +42,6 @@
         "projectId": "b4570386-c76c-4b0b-b889-27c2bdf77ad3"
       }
     },
-    "owner": "despachgo-team"
+    "owner": "despachgoeass-team"
   }
 }
