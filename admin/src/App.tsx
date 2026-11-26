@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Fondo from './components/Fondo'
 import Layout from './components/Layout'
 import { AuthProvider } from './hooks/useAuth'
+import { AvisoProvider } from './hooks/useAviso'
 import ArmarRuta from './pages/ArmarRuta'
 import Login from './pages/Login'
 import OrdenForm from './pages/OrdenForm'
@@ -13,6 +14,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Fondo />
+      <AvisoProvider>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -28,6 +30,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
+      </AvisoProvider>
     </BrowserRouter>
   )
 }

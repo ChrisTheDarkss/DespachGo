@@ -5,7 +5,11 @@ import EstadoBadge from '../components/EstadoBadge'
 import MapaPin from '../components/MapaPin'
 import MotivoDialog from '../components/MotivoDialog'
 import SelectorProductos from '../components/SelectorProductos'
+import { useAviso } from '../hooks/useAviso'
+import { hoyLocal } from '../lib/fechas'
 import { formatearTelefono, normalizarTelefono } from '../lib/telefono'
+import { LIMITES, validarOrden } from '../lib/validaciones'
+import type { CampoOrden, ErroresOrden } from '../lib/validaciones'
 import { geocodificar } from '../services/geocodificacion'
 import {
   cancelarOrden,
@@ -19,6 +23,8 @@ import type { Coordenadas, ItemOrden, Orden, Producto } from '../types'
 export default function OrdenForm() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { avisar } = useAviso()
+  const [errores, setErrores] = useState<ErroresOrden>({})
 
   const [catalogo, setCatalogo] = useState<Producto[]>([])
   const [orden, setOrden] = useState<Orden | null>(null)
@@ -29,6 +35,7 @@ export default function OrdenForm() {
   const [telefono, setTelefono] = useState('')
   const [direccion, setDireccion] = useState('')
   const [notas, setNotas] = useState('')
+  const [fechaEntrega, setFechaEntrega] = useState(hoyLocal())
   const [items, setItems] = useState<ItemOrden[]>([])
   const [pos, setPos] = useState<Coordenadas | null>(null)
   const [enfocar, setEnfocar] = useState<Coordenadas | null>(null)
@@ -60,6 +67,7 @@ export default function OrdenForm() {
           setTelefono(o.cliente_telefono)
           setDireccion(o.direccion)
           setNotas(o.notas ?? '')
+          setFechaEntrega(o.fecha_entrega)
           setItems((o.orden_items ?? []).map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad_pedida })))
           if (o.latitud != null && o.longitud != null) {
             setPos({ lat: o.latitud, lng: o.longitud })
@@ -83,7 +91,13 @@ export default function OrdenForm() {
     setPos(c)
     setPinValidado(true)
     setMensajeMapa(null)
+    setErrores((e) => ({ ...e, pin: undefined }))
   }, [])
+
+  /** Quita el error de un campo en cuanto el usuario lo vuelve a editar. */
+  function limpiar(campo: CampoOrden) {
+    setErrores((e) => (e[campo] ? { ...e, [campo]: undefined } : e))
+  }
 
   async function revisarGuia() {
     const g = guia.trim()
@@ -122,15 +136,24 @@ export default function OrdenForm() {
 
     const g = guia.trim()
     const tel = normalizarTelefono(telefono)
-    if (!g) return setError('El número de guía es obligatorio.')
-    if (!cliente.trim()) return setError('Escribe el nombre del cliente.')
-    if (!tel) return setError('El teléfono no es válido. Usa un móvil chileno, por ejemplo +56 9 1234 5678.')
-    if (!direccion.trim()) return setError('Escribe la dirección.')
-    if (!pos) return setError('Ubica el pin de la dirección en el mapa.')
-    if (!pinValidado) return setError('Confirma que el pin está en el lugar correcto.')
-    if (items.length === 0) return setError('Agrega al menos un producto.')
-    if (items.some((i) => !Number.isInteger(i.cantidad) || i.cantidad < 1)) {
-      return setError('Las cantidades deben ser números enteros mayores que 0.')
+    const errs = validarOrden({
+      guia,
+      cliente,
+      telefono,
+      direccion,
+      fechaEntrega,
+      fechaOriginal: orden?.fecha_entrega ?? null,
+      notas,
+      hayPin: !!pos,
+      pinValidado,
+      items,
+    })
+    setErrores(errs)
+    const primero = Object.keys(errs)[0]
+    if (primero || !tel || !pos) {
+      avisar('error', 'Revisa los campos marcados en rojo.')
+      document.getElementById(`campo-${primero}`)?.focus()
+      return
     }
 
     setGuardando(true)
@@ -148,13 +171,16 @@ export default function OrdenForm() {
           notas: notas.trim() || null,
           latitud: pos.lat,
           longitud: pos.lng,
+          fecha_entrega: fechaEntrega,
         },
         items,
         id,
       )
+      avisar('exito', id ? `Orden ${g} actualizada.` : `Orden ${g} creada.`)
       navigate('/ordenes')
     } catch (err) {
       setError((err as Error).message)
+      avisar('error', (err as Error).message)
       setGuardando(false)
     }
   }
@@ -163,10 +189,12 @@ export default function OrdenForm() {
     if (!id) return
     try {
       await cancelarOrden(id, motivo)
+      avisar('exito', `Orden ${orden?.numero_guia ?? ''} cancelada.`)
       navigate('/ordenes')
     } catch (err) {
       setCancelando(false)
       setError((err as Error).message)
+      avisar('error', (err as Error).message)
     }
   }
 
@@ -191,32 +219,53 @@ export default function OrdenForm() {
         </p>
       )}
 
-      <form className="form-orden" onSubmit={guardar}>
+      <form className="form-orden" onSubmit={guardar} noValidate>
         <fieldset disabled={!editable || guardando} className="columna tarjeta">
           <label className="campo">
             <span>Número de guía *</span>
             <input
+              id="campo-guia"
               value={guia}
+              maxLength={LIMITES.guia}
+              aria-invalid={!!errores.guia || !!avisoGuia}
               onChange={(e) => {
                 setGuia(e.target.value)
                 setAvisoGuia(null)
+                limpiar('guia')
               }}
               onBlur={revisarGuia}
               required
             />
+            {errores.guia && <small className="error">{errores.guia}</small>}
             {avisoGuia && <small className="error">{avisoGuia}</small>}
           </label>
 
           <label className="campo">
             <span>Cliente *</span>
-            <input value={cliente} onChange={(e) => setCliente(e.target.value)} required />
+            <input
+              id="campo-cliente"
+              value={cliente}
+              maxLength={LIMITES.cliente}
+              aria-invalid={!!errores.cliente}
+              onChange={(e) => {
+                setCliente(e.target.value)
+                limpiar('cliente')
+              }}
+              required
+            />
+            {errores.cliente && <small className="error">{errores.cliente}</small>}
           </label>
 
           <label className="campo">
             <span>Teléfono *</span>
             <input
+              id="campo-telefono"
               value={telefono}
-              onChange={(e) => setTelefono(e.target.value)}
+              aria-invalid={!!errores.telefono}
+              onChange={(e) => {
+                setTelefono(e.target.value)
+                limpiar('telefono')
+              }}
               onBlur={() => {
                 const t = normalizarTelefono(telefono)
                 if (t) setTelefono(formatearTelefono(t))
@@ -225,14 +274,21 @@ export default function OrdenForm() {
               inputMode="tel"
               required
             />
+            {errores.telefono && <small className="error">{errores.telefono}</small>}
           </label>
 
           <label className="campo">
             <span>Dirección (Temuco) *</span>
             <div className="fila">
               <input
+                id="campo-direccion"
                 value={direccion}
-                onChange={(e) => setDireccion(e.target.value)}
+                maxLength={LIMITES.direccion}
+                aria-invalid={!!errores.direccion}
+                onChange={(e) => {
+                  setDireccion(e.target.value)
+                  limpiar('direccion')
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
@@ -251,11 +307,44 @@ export default function OrdenForm() {
                 {buscando ? 'Buscando…' : 'Buscar en mapa'}
               </button>
             </div>
+            {errores.direccion && <small className="error">{errores.direccion}</small>}
+          </label>
+
+          <label className="campo">
+            <span>Fecha de entrega *</span>
+            <input
+              id="campo-fechaEntrega"
+              type="date"
+              value={fechaEntrega}
+              min={orden ? undefined : hoyLocal()}
+              aria-invalid={!!errores.fechaEntrega}
+              onChange={(e) => {
+                setFechaEntrega(e.target.value)
+                limpiar('fechaEntrega')
+              }}
+              required
+            />
+            {errores.fechaEntrega ? (
+              <small className="error">{errores.fechaEntrega}</small>
+            ) : (
+              <small className="texto-suave">Día en que la orden debería ir a dejarse.</small>
+            )}
           </label>
 
           <label className="campo">
             <span>Notas</span>
-            <textarea rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} />
+            <textarea
+              id="campo-notas"
+              rows={2}
+              value={notas}
+              maxLength={LIMITES.notas}
+              aria-invalid={!!errores.notas}
+              onChange={(e) => {
+                setNotas(e.target.value)
+                limpiar('notas')
+              }}
+            />
+            {errores.notas && <small className="error">{errores.notas}</small>}
           </label>
 
           <div className="campo">
@@ -263,9 +352,13 @@ export default function OrdenForm() {
             <SelectorProductos
               catalogo={catalogo}
               items={items}
-              onChange={setItems}
+              onChange={(nuevos) => {
+                setItems(nuevos)
+                limpiar('items')
+              }}
               deshabilitado={!editable || guardando}
             />
+            {errores.items && <small className="error" id="campo-items">{errores.items}</small>}
             {catalogo.length === 0 && (
               <small className="error">El catálogo de productos está vacío.</small>
             )}
@@ -286,13 +379,18 @@ export default function OrdenForm() {
             </p>
             <label className="check">
               <input
+                id="campo-pin"
                 type="checkbox"
                 checked={pinValidado}
                 disabled={!pos || !editable}
-                onChange={(e) => setPinValidado(e.target.checked)}
+                onChange={(e) => {
+                  setPinValidado(e.target.checked)
+                  limpiar('pin')
+                }}
               />
               <span>El pin está en la ubicación correcta</span>
             </label>
+            {errores.pin && <small className="error">{errores.pin}</small>}
           </div>
 
           {error && <p className="error">{error}</p>}
